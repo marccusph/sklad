@@ -1,0 +1,903 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Sklad</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap" rel="stylesheet"/>
+<style>
+:root {
+  --bg:      #F4F6FA;
+  --surface: #FFFFFF;
+  --sf2:     #F8F9FB;
+  --sf3:     #F0F2F7;
+  --border:  #E8EAF0;
+  --border2: #D1D5DB;
+  --t1: #0F172A;
+  --t2: #64748B;
+  --t3: #94A3B8;
+  --dark:  #0F172A;
+  --dark2: #1E293B;
+  --green: #22C55E;
+  --r:  12px;
+  --rl: 20px;
+  --sh: 0 1px 4px rgba(15,23,42,.06), 0 1px 2px rgba(15,23,42,.04);
+  --sh2: 0 4px 16px rgba(15,23,42,.09), 0 2px 6px rgba(15,23,42,.05);
+}
+*{margin:0;padding:0;box-sizing:border-box;}
+html,body{height:100%;overflow:hidden;}
+body{font-family:'Plus Jakarta Sans',sans-serif;background:var(--bg);color:var(--t1);font-size:14px;-webkit-font-smoothing:antialiased;}
+
+/* ── ANIMATIONS ── */
+@keyframes fadeUp{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:translateY(0)}}
+@keyframes msgIn{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:translateY(0)}}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+@keyframes dotBounce{0%,60%,100%{transform:translateY(0);opacity:.4}30%{transform:translateY(-3px);opacity:1}}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes toastIn{from{opacity:0;transform:translateX(-50%) translateY(6px)}to{opacity:1;transform:translateX(-50%) translateY(0)}}
+
+.hidden{display:none!important;}
+
+/* ════════════════════════════════
+   AUTH SCREENS  (setup + identity)
+════════════════════════════════ */
+.auth-shell{
+  height:100vh;display:flex;align-items:center;justify-content:center;
+  padding:24px;animation:fadeUp .35s ease both;
+}
+.auth-card{
+  width:100%;max-width:860px;
+  background:var(--surface);border-radius:24px;
+  box-shadow:var(--sh2);border:1px solid var(--border);
+  display:grid;grid-template-columns:260px 1fr;
+  overflow:hidden;
+}
+
+/* dark left panel */
+.auth-left{
+  background:var(--dark);padding:40px 32px;
+  display:flex;flex-direction:column;justify-content:space-between;
+}
+.brand{
+  display:inline-flex;align-items:center;gap:9px;
+  background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.12);
+  border-radius:12px;padding:8px 14px 8px 10px;
+  width:fit-content;margin-bottom:20px;
+}
+.brand-icon{
+  width:26px;height:26px;background:#fff;border-radius:7px;
+  display:flex;align-items:center;justify-content:center;
+  font-size:12px;font-weight:800;color:var(--dark);flex-shrink:0;
+}
+.brand-name{font-size:15px;font-weight:700;color:#fff;letter-spacing:-.3px;}
+.auth-tagline{font-size:14px;color:#94A3B8;line-height:1.7;margin-bottom:24px;}
+.lang-chips{display:flex;flex-wrap:wrap;gap:7px;}
+.lang-chip{
+  background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);
+  border-radius:20px;padding:5px 11px;
+  font-size:12px;color:#CBD5E1;
+  display:flex;align-items:center;gap:5px;
+}
+.auth-footer{font-size:11.5px;color:#475569;}
+
+/* light right panel */
+.auth-right{padding:44px 44px;display:flex;flex-direction:column;justify-content:center;}
+.auth-title{font-size:21px;font-weight:700;color:var(--t1);margin-bottom:5px;}
+.auth-sub{font-size:13.5px;color:var(--t2);line-height:1.6;margin-bottom:30px;}
+
+.sec-lbl{
+  font-size:10.5px;font-weight:700;text-transform:uppercase;
+  letter-spacing:1.6px;color:var(--t3);margin-bottom:11px;
+}
+
+/* steps */
+.steps{counter-reset:s;margin-bottom:22px;}
+.step{
+  counter-increment:s;display:flex;gap:11px;
+  padding:9px 0;border-bottom:1px solid var(--border);
+  font-size:13px;color:var(--t2);line-height:1.6;
+}
+.step:last-child{border:none;}
+.step::before{
+  content:counter(s);min-width:20px;height:20px;
+  background:var(--dark);border-radius:50%;
+  display:flex;align-items:center;justify-content:center;
+  font-size:9.5px;font-weight:700;color:#fff;
+  flex-shrink:0;margin-top:2px;
+}
+.step a{color:var(--dark);text-decoration:none;font-weight:500;}
+.step a:hover{text-decoration:underline;}
+code{
+  font-family:'Menlo','Courier New',monospace;font-size:11px;
+  background:var(--sf3);padding:2px 6px;border-radius:5px;
+  color:var(--t1);border:1px solid var(--border);
+}
+
+/* form */
+.field{margin-bottom:14px;}
+label{display:block;font-size:12px;font-weight:600;color:var(--t2);margin-bottom:6px;}
+textarea,.inp{
+  width:100%;background:var(--sf2);border:1.5px solid var(--border);
+  border-radius:var(--r);padding:11px 14px;
+  color:var(--t1);font-family:'Plus Jakarta Sans',sans-serif;font-size:14px;
+  outline:none;transition:border-color .15s,box-shadow .15s;
+}
+textarea{
+  font-family:'Menlo','Courier New',monospace;font-size:11.5px;
+  resize:vertical;min-height:130px;line-height:1.6;
+}
+.inp{height:46px;}
+textarea:focus,.inp:focus{
+  border-color:var(--dark);box-shadow:0 0 0 3px rgba(15,23,42,.05);
+}
+textarea::placeholder,.inp::placeholder{color:var(--t3);}
+
+/* button */
+.btn{
+  width:100%;height:46px;background:var(--dark);color:#fff;
+  font-family:'Plus Jakarta Sans',sans-serif;font-size:14px;font-weight:600;
+  border:none;border-radius:var(--r);cursor:pointer;
+  display:flex;align-items:center;justify-content:center;gap:8px;
+  transition:all .15s;
+}
+.btn:hover{background:var(--dark2);transform:translateY(-1px);box-shadow:0 4px 14px rgba(15,23,42,.18);}
+.btn:active{transform:translateY(0);}
+.btn:disabled{opacity:.5;cursor:not-allowed;transform:none;box-shadow:none;}
+
+.err{
+  font-size:13px;color:#DC2626;padding:10px 14px;margin-top:12px;
+  background:#FEF2F2;border:1px solid #FECACA;border-radius:var(--r);line-height:1.5;
+}
+
+/* lang grid */
+.lang-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:20px;}
+.lang-opt{
+  padding:11px 14px;background:var(--sf2);
+  border:1.5px solid var(--border);border-radius:var(--r);
+  cursor:pointer;transition:all .15s;
+  display:flex;align-items:center;gap:9px;
+  font-size:13.5px;font-weight:500;color:var(--t2);user-select:none;
+}
+.lang-opt:hover{border-color:var(--border2);color:var(--t1);}
+.lang-opt.sel{border-color:var(--dark);background:var(--dark);color:#fff;}
+.lang-opt .flag{font-size:18px;}
+
+/* lang note box */
+.lang-note{
+  background:#EFF6FF;border:1px solid #BFDBFE;border-radius:var(--r);
+  padding:10px 14px;margin-bottom:16px;
+  font-size:12.5px;color:#1D4ED8;line-height:1.5;
+  display:flex;gap:8px;align-items:flex-start;
+}
+
+/* ════════════════════════════════
+   CHAT LAYOUT
+════════════════════════════════ */
+.chat-shell{
+  height:100vh;display:grid;
+  grid-template-columns:240px 1fr;
+  overflow:hidden;animation:fadeUp .3s ease both;
+}
+
+/* ── SIDEBAR ── */
+.sidebar{
+  background:var(--surface);border-right:1px solid var(--border);
+  display:flex;flex-direction:column;overflow:hidden;
+}
+.sb-top{
+  padding:18px 18px 14px;border-bottom:1px solid var(--border);
+  display:flex;align-items:center;justify-content:space-between;
+}
+.sb-brand{display:flex;align-items:center;gap:8px;}
+.sb-brand-badge{
+  width:30px;height:30px;background:var(--dark);border-radius:8px;
+  display:flex;align-items:center;justify-content:center;flex-shrink:0;
+}
+.sb-brand-badge span{font-size:11px;font-weight:800;color:#fff;letter-spacing:-.5px;}
+.sb-brand-label{font-size:15px;font-weight:700;color:var(--t1);letter-spacing:-.3px;}
+
+.sb-block{padding:14px 18px;}
+.sb-block+.sb-block{border-top:1px solid var(--border);padding-top:12px;}
+.sb-block-grow{padding:14px 18px;flex:1;overflow:hidden;display:flex;flex-direction:column;}
+
+/* room row */
+.room-row{display:flex;align-items:center;gap:7px;}
+.room-id-chip{
+  flex:1;font-family:'Menlo','Courier New',monospace;font-size:11px;
+  color:var(--t2);background:var(--sf3);
+  border:1px solid var(--border);border-radius:8px;
+  padding:5px 9px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  cursor:pointer;transition:all .15s;
+}
+.room-id-chip:hover{border-color:var(--dark);color:var(--dark);}
+.icon-btn{
+  width:28px;height:28px;background:var(--sf3);border:1px solid var(--border);
+  border-radius:8px;cursor:pointer;display:flex;align-items:center;justify-content:center;
+  color:var(--t2);transition:all .15s;flex-shrink:0;
+}
+.icon-btn:hover{border-color:var(--dark);color:var(--dark);background:var(--surface);}
+
+/* participants */
+.sb-participants{flex:1;overflow-y:auto;}
+.sb-participants::-webkit-scrollbar{width:3px;}
+.sb-participants::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px;}
+.participant{
+  display:flex;align-items:center;gap:9px;padding:8px 0;
+  border-bottom:1px solid var(--border);
+}
+.participant:last-child{border:none;}
+.p-av{
+  width:30px;height:30px;border-radius:50%;
+  display:flex;align-items:center;justify-content:center;
+  font-size:10.5px;font-weight:700;flex-shrink:0;
+}
+.p-info{flex:1;min-width:0;}
+.p-name{font-size:13px;font-weight:600;color:var(--t1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.p-lang{font-size:11px;color:var(--t3);margin-top:1px;}
+
+/* me bar */
+.sb-me{
+  padding:13px 18px;border-top:1px solid var(--border);
+  display:flex;align-items:center;gap:9px;background:var(--sf2);
+}
+.me-av{
+  width:30px;height:30px;background:var(--dark);border-radius:50%;
+  display:flex;align-items:center;justify-content:center;
+  font-size:10.5px;font-weight:700;color:#fff;flex-shrink:0;
+}
+.me-info{flex:1;min-width:0;}
+.me-name{font-size:13px;font-weight:600;color:var(--t1);}
+.me-lang{font-size:11px;color:var(--t3);margin-top:1px;}
+.online-dot{
+  width:8px;height:8px;background:var(--green);border-radius:50%;
+  border:2px solid var(--surface);margin-left:auto;flex-shrink:0;
+  animation:pulse 2s infinite;
+}
+
+/* ── CHAT MAIN ── */
+.chat-main{
+  display:grid;grid-template-rows:56px 1fr auto;
+  background:var(--bg);overflow:hidden;
+}
+.chat-hdr{
+  background:var(--surface);border-bottom:1px solid var(--border);
+  padding:0 24px;display:flex;align-items:center;justify-content:space-between;
+}
+.breadcrumb{font-size:13px;color:var(--t3);display:flex;align-items:center;gap:5px;}
+.breadcrumb b{color:var(--t1);font-weight:600;}
+.sep{color:var(--t3);}
+.live-pill{
+  display:flex;align-items:center;gap:6px;background:var(--sf2);
+  border:1px solid var(--border);border-radius:20px;
+  padding:5px 12px;font-size:12px;color:var(--t2);
+}
+.live-dot{width:6px;height:6px;background:var(--green);border-radius:50%;animation:pulse 2s infinite;}
+
+/* messages */
+.msgs-area{overflow-y:auto;padding:20px 24px 8px;}
+.msgs-area::-webkit-scrollbar{width:4px;}
+.msgs-area::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px;}
+
+.empty{
+  height:100%;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;text-align:center;
+  color:var(--t3);
+}
+.empty .icon{font-size:44px;margin-bottom:12px;}
+.empty p{font-size:14px;line-height:1.7;}
+
+.date-sep{
+  text-align:center;margin:14px 0;
+  display:flex;align-items:center;gap:10px;
+}
+.date-sep::before,.date-sep::after{content:'';flex:1;height:1px;background:var(--border);}
+.date-sep span{
+  font-size:11px;color:var(--t3);font-weight:500;
+  background:var(--bg);padding:0 10px;white-space:nowrap;
+}
+
+/* message groups */
+.msg-group{margin-bottom:16px;animation:msgIn .2s ease both;}
+
+/* other user (left) */
+.msg-left{display:flex;gap:10px;}
+.msg-av{
+  width:30px;height:30px;border-radius:50%;
+  display:flex;align-items:center;justify-content:center;
+  font-size:10.5px;font-weight:700;flex-shrink:0;margin-top:3px;
+}
+.msg-content{max-width:60%;}
+.msg-meta{display:flex;align-items:center;gap:7px;margin-bottom:5px;}
+.msg-name{font-size:12.5px;font-weight:600;color:var(--t1);}
+.msg-lang-flag{font-size:13px;}
+.msg-time{font-size:11px;color:var(--t3);}
+.bubble{
+  padding:11px 15px;border-radius:4px 16px 16px 16px;
+  font-size:14px;line-height:1.55;border:1px solid transparent;
+}
+
+/* own (right) */
+.msg-right{display:flex;flex-direction:column;align-items:flex-end;}
+.bubble-own{
+  max-width:60%;padding:11px 15px;
+  border-radius:16px 4px 16px 16px;
+  background:var(--dark);color:#F8FAFC;
+  font-size:14px;line-height:1.55;
+}
+.own-time{font-size:11px;color:var(--t3);margin-top:5px;}
+
+/* translation */
+.xl-divider{height:1px;background:rgba(0,0,0,.06);margin:8px 0;}
+.xl-translated{font-size:13.5px;line-height:1.5;color:var(--t1);}
+.xl-badge{
+  display:flex;align-items:center;gap:4px;
+  margin-top:4px;font-size:10.5px;color:var(--t3);font-weight:500;
+}
+.xl-original{font-size:11.5px;color:var(--t3);font-style:italic;margin-top:3px;line-height:1.4;}
+.xl-loading{
+  display:flex;align-items:center;gap:6px;
+  margin-top:8px;padding-top:8px;
+  border-top:1px solid rgba(0,0,0,.06);
+}
+.dots span{
+  display:inline-block;width:4px;height:4px;
+  background:var(--t3);border-radius:50%;
+  animation:dotBounce 1.1s infinite;
+}
+.dots span:nth-child(2){animation-delay:.15s;}
+.dots span:nth-child(3){animation-delay:.3s;}
+
+/* input */
+.input-zone{background:var(--surface);border-top:1px solid var(--border);padding:13px 24px 15px;}
+.input-box{
+  display:flex;align-items:flex-end;gap:10px;
+  background:var(--sf2);border:1.5px solid var(--border);
+  border-radius:14px;padding:9px 10px 9px 16px;
+  transition:border-color .15s,box-shadow .15s;
+}
+.input-box:focus-within{border-color:var(--dark);box-shadow:0 0 0 3px rgba(15,23,42,.05);}
+.chat-ta{
+  flex:1;background:transparent;border:none;outline:none;
+  font-family:'Plus Jakarta Sans',sans-serif;font-size:14px;color:var(--t1);
+  resize:none;line-height:1.45;min-height:26px;max-height:100px;padding:2px 0;
+}
+.chat-ta::placeholder{color:var(--t3);}
+.send-btn{
+  width:34px;height:34px;background:var(--dark);color:#fff;
+  border:none;border-radius:10px;cursor:pointer;flex-shrink:0;
+  display:flex;align-items:center;justify-content:center;
+  transition:all .15s;
+}
+.send-btn:hover{background:var(--dark2);transform:scale(1.06);}
+.send-btn:active{transform:scale(.95);}
+.input-hint{font-size:11.5px;color:var(--t3);margin-top:7px;padding-left:2px;display:flex;align-items:center;gap:4px;}
+
+/* toast */
+.toast{
+  position:fixed;bottom:80px;left:50%;transform:translateX(-50%);
+  background:var(--dark);color:#fff;
+  padding:9px 18px;border-radius:20px;font-size:13px;
+  box-shadow:var(--sh2);z-index:999;
+  animation:toastIn .25s ease both;white-space:nowrap;
+}
+
+/* spinner */
+.spinner{width:16px;height:16px;border:2px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:spin .6s linear infinite;}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script type="module">
+import { initializeApp, getApps, getApp } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
+import { getDatabase, ref, push, onValue, query, orderByChild, limitToLast } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js';
+
+// ── CONSTANTS ─────────────────────────────────
+const LANGS = {
+  pt:{name:'Português', flag:'🇧🇷'},
+  en:{name:'English',   flag:'🇬🇧'},
+  es:{name:'Español',   flag:'🇪🇸'},
+  fr:{name:'Français',  flag:'🇫🇷'},
+  de:{name:'Deutsch',   flag:'🇩🇪'},
+};
+
+// 6 soft pastel palettes — assigned per user deterministically
+const PALETTE = [
+  {av:'#6D28D9', avBg:'#EDE9FE', bg:'#F5F3FF', bd:'#DDD6FE'},
+  {av:'#0369A1', avBg:'#DBEAFE', bg:'#EFF6FF', bd:'#BFDBFE'},
+  {av:'#047857', avBg:'#D1FAE5', bg:'#ECFDF5', bd:'#A7F3D0'},
+  {av:'#B45309', avBg:'#FEF3C7', bg:'#FFFBEB', bd:'#FDE68A'},
+  {av:'#BE185D', avBg:'#FCE7F3', bg:'#FDF2F8', bd:'#FBCFE8'},
+  {av:'#0E7490', avBg:'#CFFAFE', bg:'#ECFEFF', bd:'#A5F3FC'},
+];
+
+const FB_KEY = 'sklad_fb_v3';
+const MODEL  = 'claude-sonnet-4-20250514';
+
+// ── STATE ─────────────────────────────────────
+const S = {
+  screen:'setup', db:null, roomId:null, user:null,
+  messages:[], cache:{}, pending:new Set(),
+  userColors:{}, colorIdx:0,
+};
+
+// ── FIREBASE ──────────────────────────────────
+const loadCfg = () => { try{return JSON.parse(localStorage.getItem(FB_KEY));}catch{return null;} };
+const saveCfg = c => { try{localStorage.setItem(FB_KEY,JSON.stringify(c));}catch{} };
+function initFb(cfg){
+  try{
+    const app = getApps().length ? getApp() : initializeApp(cfg);
+    S.db = getDatabase(app); return true;
+  }catch(e){console.error(e);return false;}
+}
+
+// ── ROOM ──────────────────────────────────────
+function parseHash(){
+  const hash = window.location.hash.slice(1);
+  if (!hash) return { room: null, cfg: null };
+  // New format: query-string style → #room=xxx&cfg=base64
+  if (hash.includes('=')) {
+    const p = new URLSearchParams(hash);
+    return { room: p.get('room'), cfg: p.get('cfg') };
+  }
+  // Legacy format: #room-xxx (just the room ID)
+  return { room: hash, cfg: null };
+}
+function buildShareURL(){
+  const cfg = loadCfg();
+  const p = new URLSearchParams();
+  if (S.roomId) p.set('room', S.roomId);
+  if (cfg) p.set('cfg', btoa(unescape(encodeURIComponent(JSON.stringify(cfg)))));
+  return `${window.location.origin}${window.location.pathname}#${p.toString()}`;
+}
+function updateURLHash(){
+  const cfg = loadCfg();
+  const p = new URLSearchParams();
+  if (S.roomId) p.set('room', S.roomId);
+  if (cfg) p.set('cfg', btoa(unescape(encodeURIComponent(JSON.stringify(cfg)))));
+  history.replaceState(null, '', '#' + p.toString());
+}
+function decodeConfigFromURL(b64){
+  try { return JSON.parse(decodeURIComponent(escape(atob(b64)))); } catch { return null; }
+}
+function getOrMakeRoom(){
+  const { room } = parseHash();
+  if (room) return room;
+  const fresh = 'room-' + Math.random().toString(36).slice(2,8);
+  return fresh;
+}
+
+// ── USER COLOR ────────────────────────────────
+function userColor(uid){
+  if(S.userColors[uid]===undefined){ S.userColors[uid]=S.colorIdx%PALETTE.length; S.colorIdx++; }
+  return PALETTE[S.userColors[uid]];
+}
+
+// ── TRANSLATION ───────────────────────────────
+async function translateMessage(text, targetLang){
+  const k = `${text}|||${targetLang}`;
+  if (S.cache[k] !== undefined) return S.cache[k];
+  try {
+    const r = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({
+        model: MODEL, max_tokens: 600,
+        system: 'You are a translation engine. Detect the source language of the user text and translate it to the target language code (one of: pt, en, es, fr, de). Respond with ONLY a valid JSON object in this exact shape, no markdown, no explanations: {"detected":"<code>","translated":"<text>"}. If detected equals target, set translated to the original text unchanged.',
+        messages: [{role:'user', content:`Target: ${targetLang}\nText: ${text}`}],
+      })
+    });
+    const d = await r.json();
+    let raw = d.content?.[0]?.text?.trim() || '';
+    raw = raw.replace(/^```(?:json)?\s*/i,'').replace(/\s*```$/,'');
+    let result;
+    try { result = JSON.parse(raw); } catch { result = {detected: targetLang, translated: text}; }
+    if (!result.translated) result.translated = text;
+    if (!result.detected) result.detected = targetLang;
+    S.cache[k] = result;
+    return result;
+  } catch(e) {
+    console.error('[sklad] translation failed:', e);
+    const fallback = {detected: targetLang, translated: text};
+    return fallback;
+  }
+}
+
+async function translatePending(){
+  const ml = S.user.lang;
+  for (const msg of S.messages) {
+    const k = `${msg.text}|||${ml}`;
+    if (S.cache[k] !== undefined || S.pending.has(k)) continue;
+    S.pending.add(k);
+    translateMessage(msg.text, ml).then(() => {
+      S.pending.delete(k);
+      renderMsgs();
+      renderParticipants();
+    });
+  }
+}
+
+// ── REALTIME ──────────────────────────────────
+function listenMessages(){
+  const q = query(ref(S.db, `rooms/${S.roomId}/messages`), limitToLast(100));
+  onValue(q, snap => {
+    const msgs = [];
+    snap.forEach(c => msgs.push({id: c.key, ...c.val()}));
+    // Firebase push keys are time-ordered, but sort by ts as safety net
+    msgs.sort((a,b) => (a.ts || 0) - (b.ts || 0));
+    S.messages = msgs;
+    renderMsgs(); renderParticipants(); translatePending();
+  });
+}
+async function sendMsg(text){
+  if (!text.trim()) return;
+  try {
+    await push(ref(S.db, `rooms/${S.roomId}/messages`), {
+      authorId: S.user.id,
+      authorName: S.user.name,
+      text: text.trim(),
+      ts: Date.now(),
+    });
+  } catch(e) {
+    console.error('[sklad] send failed:', e);
+    toast('⚠️ Erro ao enviar. Verifique a conexão.');
+  }
+}
+
+// ── UTILS ─────────────────────────────────────
+const initials = n => n.trim().split(/\s+/).map(w=>w[0]).join('').toUpperCase().slice(0,2);
+const fmtTime  = ts => new Date(ts).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
+const fmtDate  = ts => new Date(ts).toLocaleDateString('pt-BR',{weekday:'long',day:'numeric',month:'long'});
+function esc(t){const d=document.createElement('div');d.appendChild(document.createTextNode(t));return d.innerHTML;}
+function toast(m){
+  document.querySelectorAll('.toast').forEach(e=>e.remove());
+  const t=document.createElement('div');t.className='toast';t.textContent=m;
+  document.body.appendChild(t);setTimeout(()=>t.remove(),2800);
+}
+const randId=()=>Math.random().toString(36).slice(2,12);
+
+// ── RENDER ROUTER ─────────────────────────────
+function render(){
+  const a=document.getElementById('app');
+  if(S.screen==='setup')     renderSetup(a);
+  else if(S.screen==='id')   renderIdentity(a);
+  else if(S.screen==='chat') renderChatShell(a);
+}
+
+// ── SETUP SCREEN ──────────────────────────────
+function renderSetup(app){
+  app.innerHTML=`
+  <div class="auth-shell">
+    <div class="auth-card">
+      <div class="auth-left">
+        <div>
+          <div class="brand">
+            <div class="brand-icon">S</div>
+            <span class="brand-name">Sklad</span>
+          </div>
+          <p class="auth-tagline">Chat em tempo real sem barreiras de idioma. Cada pessoa fala e lê na própria língua — a tradução acontece automaticamente.</p>
+          <div class="lang-chips">
+            <div class="lang-chip">🇧🇷 Português</div>
+            <div class="lang-chip">🇬🇧 English</div>
+            <div class="lang-chip">🇪🇸 Español</div>
+            <div class="lang-chip">🇫🇷 Français</div>
+            <div class="lang-chip">🇩🇪 Deutsch</div>
+          </div>
+        </div>
+        <div class="auth-footer">Firebase + Claude AI</div>
+      </div>
+      <div class="auth-right">
+        <div class="auth-title">Configurar Firebase</div>
+        <div class="auth-sub">Conecte seu banco de dados para ativar o chat em tempo real entre dispositivos e pessoas.</div>
+        <div class="sec-lbl">Passo a passo</div>
+        <div class="steps">
+          <div class="step">Acesse <a href="https://console.firebase.google.com" target="_blank">console.firebase.google.com</a> e crie um projeto.</div>
+          <div class="step">Vá em <strong>Build → Realtime Database</strong> → <strong>Create Database</strong> → <em>Start in test mode</em>.</div>
+          <div class="step">Em <strong>Project Settings → General</strong>, role até <em>Your apps</em>, selecione <strong>Config</strong> e copie o bloco JSON completo.</div>
+          <div class="step">Cole abaixo e clique em Conectar. Compartilhe o link da sala com as outras pessoas.</div>
+        </div>
+        <div class="field">
+          <label>Firebase Config (JSON)</label>
+          <textarea id="cfgIn" spellcheck="false" placeholder='{"apiKey":"...","authDomain":"...","databaseURL":"...","projectId":"...","storageBucket":"...","messagingSenderId":"...","appId":"..."}' ></textarea>
+        </div>
+        <button class="btn" id="connBtn"><span id="connLbl">Conectar →</span></button>
+        <div id="setupErr"></div>
+      </div>
+    </div>
+  </div>`;
+
+  const saved=loadCfg();
+  if(saved) document.getElementById('cfgIn').value=JSON.stringify(saved,null,2);
+
+  document.getElementById('connBtn').addEventListener('click',()=>{
+    const raw=document.getElementById('cfgIn').value.trim();
+    const err=document.getElementById('setupErr');
+    err.innerHTML='';
+    try{
+      const cfg=JSON.parse(raw);
+      if(!cfg.databaseURL){err.innerHTML='<div class="err">⚠️ Campo "databaseURL" não encontrado. Ative o Realtime Database e copie o config novamente.</div>';return;}
+      document.getElementById('connLbl').innerHTML='<div class="spinner"></div>';
+      if(!initFb(cfg)){document.getElementById('connLbl').textContent='Conectar →';err.innerHTML='<div class="err">Erro ao conectar. Verifique a configuração.</div>';return;}
+      saveCfg(cfg);S.screen='id';render();
+    }catch{err.innerHTML='<div class="err">JSON inválido — verifique a formatação.</div>';}
+  });
+}
+
+// ── IDENTITY SCREEN ───────────────────────────
+function renderIdentity(app){
+  app.innerHTML=`
+  <div class="auth-shell">
+    <div class="auth-card">
+      <div class="auth-left">
+        <div>
+          <div class="brand">
+            <div class="brand-icon">S</div>
+            <span class="brand-name">Sklad</span>
+          </div>
+          <p class="auth-tagline">Você escreve em qualquer língua. Todo mundo lê na deles. Zero fricção.</p>
+        </div>
+        <div class="auth-footer">Sala compartilhável por link</div>
+      </div>
+      <div class="auth-right">
+        <div class="auth-title">Quem é você?</div>
+        <div class="auth-sub">Configure seu nome e idioma para entrar na sala.</div>
+        <div class="field">
+          <label>Seu nome</label>
+          <input type="text" class="inp" id="nameIn" placeholder="Como quer ser chamado?" maxlength="30"/>
+        </div>
+        <div class="lang-note">
+          <span>💡</span>
+          <span><strong>Idioma de leitura:</strong> todas as mensagens da conversa vão aparecer para você nessa língua, independente do idioma em que foram escritas.</span>
+        </div>
+        <div class="sec-lbl">Quero ler em</div>
+        <div class="lang-grid" id="lgrid">
+          ${Object.entries(LANGS).map(([code,l],i)=>`
+            <div class="lang-opt ${i===0?'sel':''}" data-lang="${code}">
+              <span class="flag">${l.flag}</span>
+              <span>${l.name}</span>
+            </div>`).join('')}
+        </div>
+        <button class="btn" id="joinBtn">Entrar na sala →</button>
+        <div id="idErr"></div>
+      </div>
+    </div>
+  </div>`;
+
+  let selLang='pt';
+  document.querySelectorAll('.lang-opt').forEach(el=>{
+    el.addEventListener('click',()=>{
+      document.querySelectorAll('.lang-opt').forEach(e=>e.classList.remove('sel'));
+      el.classList.add('sel'); selLang=el.dataset.lang;
+    });
+  });
+
+  const join=()=>{
+    const name=document.getElementById('nameIn').value.trim();
+    if(!name){document.getElementById('idErr').innerHTML='<div class="err">Por favor, insira seu nome.</div>';return;}
+    S.user={id:randId(),name,lang:selLang};
+    S.roomId=getOrMakeRoom();
+    updateURLHash();
+    S.screen='chat'; render(); listenMessages();
+  };
+  document.getElementById('joinBtn').addEventListener('click',join);
+  document.getElementById('nameIn').addEventListener('keydown',e=>{if(e.key==='Enter')join();});
+}
+
+// ── CHAT SHELL ────────────────────────────────
+function renderChatShell(app){
+  const lang=LANGS[S.user.lang];
+  app.innerHTML=`
+  <div class="chat-shell">
+    <aside class="sidebar">
+
+      <div class="sb-top">
+        <div class="sb-brand">
+          <div class="sb-brand-badge"><span>Sk</span></div>
+          <span class="sb-brand-label">Sklad</span>
+        </div>
+      </div>
+
+      <div class="sb-block">
+        <div class="sec-lbl">Sala</div>
+        <div class="room-row">
+          <div class="room-id-chip" id="roomChip">${S.roomId}</div>
+          <button class="icon-btn" id="copyBtn" title="Copiar link da sala">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <div class="sb-block-grow">
+        <div class="sec-lbl">Participantes</div>
+        <div class="sb-participants" id="sbParts">
+          <div style="font-size:12px;color:var(--t3)">Aguardando participantes…</div>
+        </div>
+      </div>
+
+      <div class="sb-me">
+        <div class="me-av">${initials(S.user.name)}</div>
+        <div class="me-info">
+          <div class="me-name">${esc(S.user.name)}</div>
+          <div class="me-lang">lendo em ${lang.flag} ${lang.name}</div>
+        </div>
+        <div class="online-dot"></div>
+      </div>
+
+    </aside>
+
+    <main class="chat-main">
+
+      <div class="chat-hdr">
+        <div class="breadcrumb">
+          Mensagens <span class="sep">/</span> <b>Sala ${S.roomId}</b>
+        </div>
+        <div class="live-pill">
+          <div class="live-dot"></div>
+          ao vivo
+        </div>
+      </div>
+
+      <div class="msgs-area" id="msgsArea">
+        <div class="empty" id="emptyState">
+          <div class="icon">💬</div>
+          <p>Nenhuma mensagem ainda.<br>Copie o link da sala e convide as pessoas!</p>
+        </div>
+        <div id="msgList"></div>
+      </div>
+
+      <div class="input-zone">
+        <div class="input-box">
+          <textarea class="chat-ta" id="chatTa" placeholder="Escreva na sua língua…" rows="1"></textarea>
+          <button class="send-btn" id="sendBtn">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
+            </svg>
+          </button>
+        </div>
+        <div class="input-hint">${lang.flag} Você lê tudo em ${lang.name} &nbsp;·&nbsp; Enter para enviar &nbsp;·&nbsp; Shift+Enter nova linha</div>
+      </div>
+
+    </main>
+  </div>`;
+
+  // copy link
+  const copyLink=()=>{const url=buildShareURL();navigator.clipboard.writeText(url).then(()=>toast('🔗 Link copiado! Inclui a config do Firebase — só compartilhar.')).catch(()=>toast(url));};
+  document.getElementById('copyBtn').addEventListener('click',copyLink);
+  document.getElementById('roomChip').addEventListener('click',copyLink);
+
+  // send
+  const ta=document.getElementById('chatTa');
+  const submit=async()=>{const t=ta.value.trim();if(!t)return;ta.value='';ta.style.height='auto';await sendMsg(t);};
+  document.getElementById('sendBtn').addEventListener('click',submit);
+  ta.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();submit();}});
+  ta.addEventListener('input',()=>{ta.style.height='auto';ta.style.height=Math.min(ta.scrollHeight,100)+'px';});
+}
+
+// ── RENDER MESSAGES ───────────────────────────
+function renderMsgs(){
+  const list = document.getElementById('msgList');
+  const empty = document.getElementById('emptyState');
+  if (!list) return;
+  if (S.messages.length === 0) { list.innerHTML=''; if(empty) empty.style.display='flex'; return; }
+  if (empty) empty.style.display = 'none';
+
+  const ml = S.user.lang;
+  let lastDate = null;
+  let html = '';
+
+  for (const msg of S.messages) {
+    const isOwn = msg.authorId === S.user.id;
+    const ck = `${msg.text}|||${ml}`;
+    const xl = S.cache[ck]; // {detected, translated} | undefined
+    const pending = !xl && S.pending.has(ck);
+    const detected = xl?.detected || null;
+    const wasTranslated = xl && xl.detected !== ml;
+    const displayText = xl ? xl.translated : msg.text;
+    const detLang = detected ? (LANGS[detected] || {name: detected, flag: '🌐'}) : null;
+    const msgDate = new Date(msg.ts || Date.now()).toDateString();
+
+    if (msgDate !== lastDate) {
+      html += `<div class="date-sep"><span>${fmtDate(msg.ts || Date.now())}</span></div>`;
+      lastDate = msgDate;
+    }
+
+    if (isOwn) {
+      const origLine = (wasTranslated)
+        ? `<div style="font-size:11.5px;opacity:.5;margin-top:6px;font-style:italic;padding-top:6px;border-top:1px solid rgba(255,255,255,.12)">${esc(msg.text)}</div>`
+        : '';
+      const loadLine = pending
+        ? `<div style="display:flex;align-items:center;gap:6px;margin-top:7px;padding-top:7px;border-top:1px solid rgba(255,255,255,.12)"><div class="dots" style="filter:brightness(3)"><span></span><span></span><span></span></div><span style="font-size:11px;opacity:.5">traduzindo…</span></div>`
+        : '';
+      html += `
+      <div class="msg-group">
+        <div class="msg-right">
+          <div class="bubble-own">${esc(displayText)}${origLine}${loadLine}</div>
+          <div class="own-time">${fmtTime(msg.ts || Date.now())}</div>
+        </div>
+      </div>`;
+    } else {
+      const col = userColor(msg.authorId);
+      let xlHTML = '';
+      if (wasTranslated) {
+        xlHTML = `
+          <div class="xl-divider"></div>
+          <div class="xl-badge">${detLang.flag} ↳ original em ${detLang.name}</div>
+          <div class="xl-original">${esc(msg.text)}</div>`;
+      } else if (pending) {
+        xlHTML = `
+          <div class="xl-loading">
+            <div class="dots"><span></span><span></span><span></span></div>
+            <span style="font-size:11px;color:var(--t3)">traduzindo…</span>
+          </div>`;
+      }
+      const langFlag = detLang ? detLang.flag : '';
+      html += `
+      <div class="msg-group">
+        <div class="msg-left">
+          <div class="msg-av" style="background:${col.avBg};color:${col.av}">${initials(msg.authorName)}</div>
+          <div class="msg-content">
+            <div class="msg-meta">
+              <span class="msg-name">${esc(msg.authorName)}</span>
+              ${langFlag ? `<span class="msg-lang-flag">${langFlag}</span>` : ''}
+              <span class="msg-time">${fmtTime(msg.ts || Date.now())}</span>
+            </div>
+            <div class="bubble" style="background:${col.bg};border-color:${col.bd}">
+              ${esc(displayText)}${xlHTML}
+            </div>
+          </div>
+        </div>
+      </div>`;
+    }
+  }
+
+  list.innerHTML = html;
+  const area = document.getElementById('msgsArea');
+  if (area) area.scrollTop = area.scrollHeight;
+}
+
+// ── RENDER PARTICIPANTS ───────────────────────
+function renderParticipants(){
+  const el = document.getElementById('sbParts');
+  if (!el) return;
+  const seen = {};
+  // collect unique users (excluding self), keeping their last message for lang detection
+  for (const msg of S.messages) {
+    if (msg.authorId !== S.user.id) seen[msg.authorId] = msg;
+  }
+  const users = Object.values(seen);
+  if (!users.length) { el.innerHTML='<div style="font-size:12px;color:var(--t3)">Aguardando participantes…</div>'; return; }
+  const ml = S.user.lang;
+  el.innerHTML = users.map(u => {
+    const col = userColor(u.authorId);
+    // Try to show detected lang from their last message
+    const ck = `${u.text}|||${ml}`;
+    const xl = S.cache[ck];
+    const detected = xl?.detected;
+    const detLang = detected ? (LANGS[detected] || null) : null;
+    return `
+      <div class="participant">
+        <div class="p-av" style="background:${col.avBg};color:${col.av}">${initials(u.authorName)}</div>
+        <div class="p-info">
+          <div class="p-name">${esc(u.authorName)}</div>
+          <div class="p-lang">${detLang ? `escreve em ${detLang.flag} ${detLang.name}` : 'online'}</div>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+// ── BOOT ──────────────────────────────────────
+(function boot(){
+  const { cfg: urlCfg } = parseHash();
+  let cfg = null;
+  if (urlCfg) {
+    cfg = decodeConfigFromURL(urlCfg);
+    if (cfg) saveCfg(cfg); // persist in localStorage too
+  }
+  if (!cfg) cfg = loadCfg();
+  if (cfg && initFb(cfg)) S.screen = 'id';
+  render();
+})();
+</script>
+</body>
+</html>
