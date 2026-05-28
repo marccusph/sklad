@@ -620,27 +620,32 @@ async function translatePending(){
 
 // ── REALTIME ──────────────────────────────────
 function listenMessages(){
+  console.log('[sklad] 🎧 setting up listener for room:', S.roomId);
   const q = query(ref(S.db, `rooms/${S.roomId}/messages`), limitToLast(100));
   onValue(q, snap => {
     const msgs = [];
     snap.forEach(c => msgs.push({id: c.key, ...c.val()}));
-    // Firebase push keys are time-ordered, but sort by ts as safety net
     msgs.sort((a,b) => (a.ts || 0) - (b.ts || 0));
+    console.log(`[sklad] 📨 onValue fired — received ${msgs.length} messages:`, msgs.map(m => `${m.authorName}: "${m.text}"`));
     S.messages = msgs;
     renderMsgs(); renderParticipants(); translatePending();
+  }, err => {
+    console.error('[sklad] ❌ Firebase listener error:', err);
   });
 }
 async function sendMsg(text){
   if (!text.trim()) return;
+  console.log('[sklad] ✉️ sending message:', text.trim(), 'to room:', S.roomId);
   try {
-    await push(ref(S.db, `rooms/${S.roomId}/messages`), {
+    const result = await push(ref(S.db, `rooms/${S.roomId}/messages`), {
       authorId: S.user.id,
       authorName: S.user.name,
       text: text.trim(),
       ts: Date.now(),
     });
+    console.log('[sklad] ✅ message sent, key:', result.key);
   } catch(e) {
-    console.error('[sklad] send failed:', e);
+    console.error('[sklad] ❌ send failed:', e);
     toast('⚠️ Erro ao enviar. Verifique a conexão.');
   }
 }
@@ -880,6 +885,7 @@ function renderChatShell(app){
 function renderMsgs(){
   const list = document.getElementById('msgList');
   const empty = document.getElementById('emptyState');
+  console.log(`[sklad] 🎨 renderMsgs called — ${S.messages.length} messages in state, list element exists: ${!!list}`);
   if (!list) return;
   if (S.messages.length === 0) { list.innerHTML=''; if(empty) empty.style.display='flex'; return; }
   if (empty) empty.style.display = 'none';
