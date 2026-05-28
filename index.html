@@ -384,6 +384,95 @@ textarea::placeholder,.inp::placeholder{color:var(--t3);}
 
 /* spinner */
 .spinner{width:16px;height:16px;border:2px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:spin .6s linear infinite;}
+
+/* ════════════════════════════════
+   RESPONSIVE — mobile (< 768px)
+════════════════════════════════ */
+@media (max-width: 768px) {
+  /* AUTH SCREENS — stack vertically */
+  .auth-shell { padding: 0; align-items: stretch; }
+  .auth-card {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto 1fr;
+    border-radius: 0;
+    min-height: 100vh;
+    border: none;
+    box-shadow: none;
+    max-width: none;
+  }
+  .auth-left {
+    padding: 24px 22px 20px;
+  }
+  .auth-tagline { margin-bottom: 14px; font-size: 13.5px; line-height: 1.5; }
+  .lang-chips { display: none; }
+  .auth-footer { display: none; }
+  .auth-right { padding: 24px 22px 32px; }
+  .auth-title { font-size: 19px; }
+  .auth-sub { font-size: 13px; margin-bottom: 22px; }
+
+  /* CHAT — collapse sidebar to top bar */
+  .chat-shell {
+    grid-template-columns: 1fr;
+    grid-template-rows: 56px 1fr auto;
+  }
+  .sidebar {
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    flex-direction: row;
+    overflow: hidden;
+    align-items: center;
+    padding: 0 14px;
+    gap: 10px;
+  }
+  .sb-top { border: none; padding: 0; flex-shrink: 0; }
+  .sb-block, .sb-block-grow, .sb-me { border: none; padding: 0; background: transparent; }
+  .sb-block { flex: 1; min-width: 0; }
+  .sec-lbl { display: none; }
+  .sb-block-grow { display: none; } /* hide participants list on mobile */
+  .room-row { gap: 6px; }
+  .room-id-chip { max-width: none; }
+  .sb-me {
+    flex-shrink: 0;
+    gap: 6px;
+  }
+  .me-info { display: none; }
+  .online-dot { margin: 0; }
+
+  /* Compact chat header on mobile (it stays below the sidebar) */
+  .chat-hdr { padding: 0 14px; }
+  .breadcrumb { font-size: 12px; }
+  .live-pill { display: none; }
+
+  /* Messages */
+  .msgs-area { padding: 14px 14px 6px; }
+  .msg-content { max-width: 78%; }
+  .bubble-own { max-width: 78%; }
+  .bubble { font-size: 13.5px; padding: 10px 13px; }
+  .bubble-own { font-size: 13.5px; padding: 10px 13px; }
+
+  /* Input */
+  .input-zone { padding: 10px 14px 12px; }
+  .input-box { padding: 8px 9px 8px 14px; border-radius: 12px; }
+  .chat-ta { font-size: 14px; }
+  .input-hint { font-size: 11px; }
+
+  /* Steps spacing tighter */
+  .steps { margin-bottom: 18px; }
+  .step { font-size: 12.5px; padding: 8px 0; }
+  textarea { min-height: 110px; }
+  .lang-grid { gap: 7px; margin-bottom: 16px; }
+  .lang-opt { padding: 10px 12px; font-size: 13px; }
+
+  /* Toast position */
+  .toast { bottom: 90px; font-size: 12.5px; padding: 8px 16px; }
+}
+
+/* Extra small phones (< 400px) */
+@media (max-width: 400px) {
+  .sb-brand-label { display: none; } /* show only the Sk badge */
+  .breadcrumb { font-size: 11.5px; }
+  .breadcrumb b { max-width: 90px; overflow: hidden; text-overflow: ellipsis; display: inline-block; vertical-align: bottom; white-space: nowrap; }
+}
 </style>
 </head>
 <body>
@@ -481,8 +570,8 @@ function decodeConfigFromURL(b64){
 function getOrMakeRoom(){
   const { room } = parseHash();
   if (room) return room;
-  const fresh = 'room-' + Math.random().toString(36).slice(2,8);
-  return fresh;
+  // No room in URL → everyone lands in the shared default room.
+  return 'main';
 }
 
 // ── USER COLOR ────────────────────────────────
@@ -496,26 +585,21 @@ async function translateMessage(text, targetLang){
   const k = `${text}|||${targetLang}`;
   if (S.cache[k] !== undefined) return S.cache[k];
   try {
-    const r = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({
-        model: MODEL, max_tokens: 600,
-        system: 'You are a translation engine. Detect the source language of the user text and translate it to the target language code (one of: pt, en, es, fr, de). Respond with ONLY a valid JSON object in this exact shape, no markdown, no explanations: {"detected":"<code>","translated":"<text>"}. If detected equals target, set translated to the original text unchanged.',
-        messages: [{role:'user', content:`Target: ${targetLang}\nText: ${text}`}],
-      })
-    });
-    const d = await r.json();
-    let raw = d.content?.[0]?.text?.trim() || '';
-    raw = raw.replace(/^```(?:json)?\s*/i,'').replace(/\s*```$/,'');
-    let result;
-    try { result = JSON.parse(raw); } catch { result = {detected: targetLang, translated: text}; }
-    if (!result.translated) result.translated = text;
-    if (!result.detected) result.detected = targetLang;
+    // Google Translate public endpoint — free, auto-detects source language, CORS-enabled.
+    const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${targetLang}&dt=t&q=${encodeURIComponent(text)}`;
+    const r = await fetch(url);
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const data = await r.json();
+    // Response format: [[["translated chunk","original chunk",...], ...], null, "detected_lang", ...]
+    const translated = (data[0] || []).map(seg => seg && seg[0] ? seg[0] : '').join('') || text;
+    const detected = data[2] || targetLang;
+    const result = { detected, translated };
     S.cache[k] = result;
     return result;
   } catch(e) {
     console.error('[sklad] translation failed:', e);
-    const fallback = {detected: targetLang, translated: text};
+    const fallback = { detected: targetLang, translated: text };
+    S.cache[k] = fallback;
     return fallback;
   }
 }
