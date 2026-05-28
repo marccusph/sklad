@@ -621,16 +621,26 @@ async function translatePending(){
 // ── REALTIME ──────────────────────────────────
 function listenMessages(){
   console.log('[sklad] 🎧 setting up listener for room:', S.roomId);
-  // Use orderByChild('ts') for reliable ordering with limitToLast.
-  // Requires ".indexOn": ["ts"] in Firebase rules for messages path.
-  const q = query(ref(S.db, `rooms/${S.roomId}/messages`), orderByChild('ts'), limitToLast(100));
+  // No orderByChild — fetch all messages and sort client-side.
+  // This avoids Firebase quirks with mixed-schema docs (some missing 'ts' field).
+  const q = ref(S.db, `rooms/${S.roomId}/messages`);
   onValue(q, snap => {
     const msgs = [];
-    snap.forEach(c => msgs.push({id: c.key, ...c.val()}));
-    // orderByChild already sorts, but enforce as safety net
-    msgs.sort((a,b) => (a.ts || 0) - (b.ts || 0));
-    console.log(`[sklad] 📨 onValue fired — received ${msgs.length} messages:`, msgs.map(m => `${m.authorName}: "${m.text}"`));
-    S.messages = msgs;
+    snap.forEach(c => {
+      const v = c.val();
+      // Skip malformed messages (must have text)
+      if (v && v.text) msgs.push({id: c.key, ...v});
+    });
+    // Sort by ts, falling back to push key (which is time-ordered)
+    msgs.sort((a,b) => {
+      const ta = a.ts || 0, tb = b.ts || 0;
+      if (ta !== tb) return ta - tb;
+      return (a.id || '').localeCompare(b.id || '');
+    });
+    // Keep only last 100 to bound memory
+    const trimmed = msgs.slice(-100);
+    console.log(`[sklad] 📨 onValue fired — received ${trimmed.length} messages:`, trimmed.map(m => `${m.authorName}: "${m.text}"`));
+    S.messages = trimmed;
     renderMsgs(); renderParticipants(); translatePending();
   }, err => {
     console.error('[sklad] ❌ Firebase listener error:', err);
