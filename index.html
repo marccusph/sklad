@@ -414,6 +414,19 @@ const PALETTE = [
 const FB_KEY = 'sklad_fb_v3';
 const MODEL  = 'claude-sonnet-4-20250514';
 
+// Embedded Firebase config — set this to skip the setup screen for everyone.
+// Set to null to require manual config (the original flow).
+const EMBEDDED_CFG = {
+  apiKey: "AIzaSyAACI01tU_8oK88InvCp1Hmoz9GRIUKNRg",
+  authDomain: "sklad0.firebaseapp.com",
+  databaseURL: "https://sklad0-default-rtdb.firebaseio.com",
+  projectId: "sklad0",
+  storageBucket: "sklad0.firebasestorage.app",
+  messagingSenderId: "745604098670",
+  appId: "1:745604098670:web:d9be154655fe1e5ef8147f",
+  measurementId: "G-BYV0K9DNVM"
+};
+
 // ── STATE ─────────────────────────────────────
 const S = {
   screen:'setup', db:null, roomId:null, user:null,
@@ -444,17 +457,22 @@ function parseHash(){
   return { room: hash, cfg: null };
 }
 function buildShareURL(){
-  const cfg = loadCfg();
   const p = new URLSearchParams();
   if (S.roomId) p.set('room', S.roomId);
-  if (cfg) p.set('cfg', btoa(unescape(encodeURIComponent(JSON.stringify(cfg)))));
+  // Only embed config in URL if not already baked into the file
+  if (!(EMBEDDED_CFG && EMBEDDED_CFG.databaseURL)) {
+    const cfg = loadCfg();
+    if (cfg) p.set('cfg', btoa(unescape(encodeURIComponent(JSON.stringify(cfg)))));
+  }
   return `${window.location.origin}${window.location.pathname}#${p.toString()}`;
 }
 function updateURLHash(){
-  const cfg = loadCfg();
   const p = new URLSearchParams();
   if (S.roomId) p.set('room', S.roomId);
-  if (cfg) p.set('cfg', btoa(unescape(encodeURIComponent(JSON.stringify(cfg)))));
+  if (!(EMBEDDED_CFG && EMBEDDED_CFG.databaseURL)) {
+    const cfg = loadCfg();
+    if (cfg) p.set('cfg', btoa(unescape(encodeURIComponent(JSON.stringify(cfg)))));
+  }
   history.replaceState(null, '', '#' + p.toString());
 }
 function decodeConfigFromURL(b64){
@@ -888,13 +906,18 @@ function renderParticipants(){
 
 // ── BOOT ──────────────────────────────────────
 (function boot(){
-  const { cfg: urlCfg } = parseHash();
   let cfg = null;
-  if (urlCfg) {
-    cfg = decodeConfigFromURL(urlCfg);
-    if (cfg) saveCfg(cfg); // persist in localStorage too
+  // Priority: embedded config > URL hash > localStorage
+  if (EMBEDDED_CFG && EMBEDDED_CFG.databaseURL) {
+    cfg = EMBEDDED_CFG;
+  } else {
+    const { cfg: urlCfg } = parseHash();
+    if (urlCfg) {
+      cfg = decodeConfigFromURL(urlCfg);
+      if (cfg) saveCfg(cfg);
+    }
+    if (!cfg) cfg = loadCfg();
   }
-  if (!cfg) cfg = loadCfg();
   if (cfg && initFb(cfg)) S.screen = 'id';
   render();
 })();
