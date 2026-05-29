@@ -217,6 +217,16 @@ textarea::placeholder,.inp::placeholder{color:var(--t3);}
   color:var(--t2);transition:all .15s;flex-shrink:0;
 }
 .icon-btn:hover{border-color:var(--dark);color:var(--dark);background:var(--surface);}
+.new-room-btn{
+  width:100%; margin-top:8px;
+  display:flex; align-items:center; justify-content:center; gap:6px;
+  background:var(--sf2); border:1px dashed var(--border2);
+  border-radius:8px; padding:8px 10px; cursor:pointer;
+  font-family:'Plus Jakarta Sans',sans-serif; font-size:12px; font-weight:600;
+  color:var(--t2); transition:all .15s;
+}
+.new-room-btn:hover{background:var(--surface);border-color:var(--dark);border-style:solid;color:var(--dark);}
+.new-room-btn:active{transform:scale(.97);}
 
 /* participants */
 .sb-participants{flex:1;overflow-y:auto;}
@@ -831,6 +841,12 @@ function renderChatShell(app){
             </svg>
           </button>
         </div>
+        <button class="new-room-btn" id="newRoomBtn">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+          </svg>
+          <span>Nova sala</span>
+        </button>
       </div>
 
       <div class="sb-block-grow">
@@ -890,6 +906,27 @@ function renderChatShell(app){
   const copyLink=()=>{const url=buildShareURL();navigator.clipboard.writeText(url).then(()=>toast('🔗 Link copiado! Inclui a config do Firebase — só compartilhar.')).catch(()=>toast(url));};
   document.getElementById('copyBtn').addEventListener('click',copyLink);
   document.getElementById('roomChip').addEventListener('click',copyLink);
+
+  // new room — generates a fresh room ID and switches to it
+  document.getElementById('newRoomBtn').addEventListener('click', () => {
+    const fresh = 'room-' + Math.random().toString(36).slice(2,8);
+    // detach current listener and reset message state
+    if (S.unsub) { try { S.unsub(); } catch{} S.unsub = null; }
+    S.roomId = fresh;
+    S.messages = [];
+    S.cache = {};
+    S.pending = new Set();
+    S.userColors = {};
+    S.colorIdx = 0;
+    updateURLHash();
+    render();
+    listenMessages();
+    setTimeout(() => {
+      navigator.clipboard.writeText(buildShareURL())
+        .then(() => toast(`✨ Sala ${fresh} criada! Link copiado.`))
+        .catch(() => toast(`✨ Sala ${fresh} criada!`));
+    }, 100);
+  });
 
   // send
   const ta=document.getElementById('chatTa');
