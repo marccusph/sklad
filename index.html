@@ -520,7 +520,7 @@ const EMBEDDED_CFG = {
 const S = {
   screen:'setup', db:null, roomId:null, user:null,
   messages:[], cache:{}, pending:new Set(),
-  userColors:{}, colorIdx:0,
+  userColors:{}, colorIdx:0, unsub:null,
 };
 
 // ── FIREBASE ──────────────────────────────────
@@ -620,31 +620,29 @@ async function translatePending(){
 
 // ── REALTIME ──────────────────────────────────
 function listenMessages(){
+  // Detach previous listener if any (prevents stale duplicates on re-entry)
+  if (S.unsub) { try { S.unsub(); } catch{} S.unsub = null; }
   console.log('[sklad] 🎧 setting up listener for room:', S.roomId);
-  // No orderByChild — fetch all messages and sort client-side.
-  // This avoids Firebase quirks with mixed-schema docs (some missing 'ts' field).
   const q = ref(S.db, `rooms/${S.roomId}/messages`);
-  onValue(q, snap => {
+  const off = onValue(q, snap => {
     const msgs = [];
     snap.forEach(c => {
       const v = c.val();
-      // Skip malformed messages (must have text)
       if (v && v.text) msgs.push({id: c.key, ...v});
     });
-    // Sort by ts, falling back to push key (which is time-ordered)
     msgs.sort((a,b) => {
       const ta = a.ts || 0, tb = b.ts || 0;
       if (ta !== tb) return ta - tb;
       return (a.id || '').localeCompare(b.id || '');
     });
-    // Keep only last 100 to bound memory
     const trimmed = msgs.slice(-100);
-    console.log(`[sklad] 📨 onValue fired — received ${trimmed.length} messages:`, trimmed.map(m => `${m.authorName}: "${m.text}"`));
+    console.log(`[sklad] 📨 onValue fired — received ${trimmed.length} messages`);
     S.messages = trimmed;
     renderMsgs(); renderParticipants(); translatePending();
   }, err => {
     console.error('[sklad] ❌ Firebase listener error:', err);
   });
+  S.unsub = off;
 }
 async function sendMsg(text){
   if (!text.trim()) return;
@@ -793,8 +791,15 @@ function renderIdentity(app){
   const join=()=>{
     const name=document.getElementById('nameIn').value.trim();
     if(!name){document.getElementById('idErr').innerHTML='<div class="err">Por favor, insira seu nome.</div>';return;}
-    S.user={id:randId(),name,lang:selLang};
-    S.roomId=getOrMakeRoom();
+    // Persist user ID across refreshes — keeps own-message detection stable.
+    let uid = null;
+    try { uid = localStorage.getItem('sklad_user_id'); } catch {}
+    if (!uid) {
+      uid = randId();
+      try { localStorage.setItem('sklad_user_id', uid); } catch {}
+    }
+    S.user = { id: uid, name, lang: selLang };
+    S.roomId = getOrMakeRoom();
     updateURLHash();
     S.screen='chat'; render(); listenMessages();
   };
@@ -908,7 +913,7 @@ function renderMsgs(){
   let html = '';
 
   for (const msg of S.messages) {
-    const isOwn = msg.authorId === S.user.id;
+    const isOwn = msg.authorId === S.user.id || msg.authorName === S.user.name;
     const ck = `${msg.text}|||${ml}`;
     const xl = S.cache[ck]; // {detected, translated} | undefined
     const pending = !xl && S.pending.has(ck);
@@ -1010,7 +1015,6 @@ function renderParticipants(){
 // ── BOOT ──────────────────────────────────────
 (function boot(){
   let cfg = null;
-  // Priority: embedded config > URL hash > localStorage
   if (EMBEDDED_CFG && EMBEDDED_CFG.databaseURL) {
     cfg = EMBEDDED_CFG;
   } else {
@@ -1023,6 +1027,20 @@ function renderParticipants(){
   }
   if (cfg && initFb(cfg)) S.screen = 'id';
   render();
+
+  // Refresh listener when tab becomes visible again (mobile/desktop tab switching)
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && S.screen === 'chat' && S.db && S.roomId) {
+      console.log('[sklad] 👁️ tab visible — refreshing listener');
+      listenMessages();
+    }
+  });
+  window.addEventListener('focus', () => {
+    if (S.screen === 'chat' && S.db && S.roomId) {
+      console.log('[sklad] 🔁 window focus — refreshing listener');
+      listenMessages();
+    }
+  });
 })();
 </script>
 </body>
