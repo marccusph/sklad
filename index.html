@@ -427,6 +427,17 @@ textarea::placeholder,.inp::placeholder{color:var(--t3);}
 .lm-opt:hover{background:var(--sf2);color:var(--t1);}
 .lm-opt.sel{background:var(--dark);color:#fff;}
 .lm-opt span:first-child{font-size:16px;}
+.lm-label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1.2px;color:var(--t3);padding:6px 10px 4px;}
+.lm-sep{height:1px;background:var(--border);margin:6px 4px;}
+.lm-colors{display:flex;gap:8px;padding:4px 10px 6px;}
+.lm-swatch{width:22px;height:22px;border-radius:50%;cursor:pointer;border:2px solid transparent;transition:transform .12s;}
+.lm-swatch:hover{transform:scale(1.12);}
+.lm-swatch.sel{border-color:var(--t1);box-shadow:0 0 0 2px var(--surface) inset;}
+
+/* ── CONNECTION STATUS ── */
+.live-pill.offline{background:#FEF3C7;border-color:#FDE68A;color:#B45309;}
+.live-dot.off{background:#F59E0B;animation:none;}
+.online-dot.off{background:#F59E0B;}
 
 /* ════════════════════════════════
    RESPONSIVE — mobile (< 768px)
@@ -522,7 +533,7 @@ textarea::placeholder,.inp::placeholder{color:var(--t3);}
 <div id="app"></div>
 <script type="module">
 import { initializeApp, getApps, getApp } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
-import { getDatabase, ref, push, onValue, set, remove, onDisconnect } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js';
+import { getDatabase, ref, push, onValue, set, update, remove, onDisconnect, serverTimestamp } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js';
 import { getAuth, signInAnonymously, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js';
 
 // ── CONSTANTS ─────────────────────────────────
@@ -547,6 +558,8 @@ const PALETTE = [
 const FB_KEY   = 'sklad_fb_v3';
 const NAME_KEY = 'sklad_user_name';
 const LANG_KEY = 'sklad_user_lang';
+const COLOR_KEY = 'sklad_user_color';
+const SEND_INTERVAL = 1000; // min ms between messages (mirrors the Firebase rule)
 
 // BCP-47 codes for the Web Speech API (recognition + synthesis)
 const SPEECH_LANG = { pt:'pt-BR', en:'en-US', es:'es-ES', fr:'fr-FR', de:'de-DE' };
@@ -568,7 +581,7 @@ const EMBEDDED_CFG = {
 const S = {
   screen:'setup', db:null, auth:null, authReady:false, roomId:null, user:null,
   messages:[], cache:{}, pending:new Set(),
-  userColors:{}, colorIdx:0, unsub:null,
+  unsub:null, connected:true, connWatch:false,
   participants:[], presenceRef:null, presenceUnsub:null, heartbeat:null,
   speakOn:false, spoken:new Set(), recognizing:false, lastSend:0,
 };
@@ -641,40 +654,68 @@ function getOrMakeRoom(){
 }
 
 // ── USER COLOR ────────────────────────────────
-function userColor(uid){
-  if(S.userColors[uid]===undefined){ S.userColors[uid]=S.colorIdx%PALETTE.length; S.colorIdx++; }
-  return PALETTE[S.userColors[uid]];
+function paletteIdxFor(uid){
+  // Explicit choice (me, or a participant who picked one) wins; otherwise a stable hash of the id.
+  if (S.user && uid === S.user.id && S.user.color != null) return S.user.color % PALETTE.length;
+  const p = (S.participants || []).find(x => x.id === uid);
+  if (p && typeof p.color === 'number') return p.color % PALETTE.length;
+  let h = 0; for (let i = 0; i < uid.length; i++) h = (h * 31 + uid.charCodeAt(i)) | 0;
+  return Math.abs(h) % PALETTE.length;
 }
+function userColor(uid){ return PALETTE[paletteIdxFor(uid)]; }
 
 // ── TRANSLATION ───────────────────────────────
+// Primary: Google's public gtx endpoint (auto-detects source, CORS-enabled).
+async function googleTranslate(text, targetLang){
+  const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${targetLang}&dt=t&q=${encodeURIComponent(text)}`;
+  const r = await fetch(url);
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  const data = await r.json();
+  // Format: [[["translated","original",...], ...], null, "detected_lang", ...]
+  const translated = (data[0] || []).map(seg => seg && seg[0] ? seg[0] : '').join('') || text;
+  return { detected: data[2] || targetLang, translated };
+}
+// Fallback: Lingva (a Google Translate proxy) across a few public instances.
+async function lingvaTranslate(text, targetLang){
+  const hosts = ['https://lingva.ml', 'https://lingva.lunar.icu', 'https://translate.plausibility.cloud'];
+  for (const h of hosts){
+    try {
+      const r = await fetch(`${h}/api/v1/auto/${targetLang}/${encodeURIComponent(text)}`);
+      if (!r.ok) continue;
+      const data = await r.json();
+      if (data && data.translation) return { detected: (data.info && data.info.detectedSource) || targetLang, translated: data.translation };
+    } catch {}
+  }
+  throw new Error('lingva failed');
+}
+const FAIL_TTL = 15000; // wait this long before retrying a failed translation
 async function translateMessage(text, targetLang){
   const k = `${text}|||${targetLang}`;
-  if (S.cache[k] !== undefined) return S.cache[k];
-  try {
-    // Google Translate public endpoint — free, auto-detects source language, CORS-enabled.
-    const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${targetLang}&dt=t&q=${encodeURIComponent(text)}`;
-    const r = await fetch(url);
-    if (!r.ok) throw new Error('HTTP ' + r.status);
-    const data = await r.json();
-    // Response format: [[["translated chunk","original chunk",...], ...], null, "detected_lang", ...]
-    const translated = (data[0] || []).map(seg => seg && seg[0] ? seg[0] : '').join('') || text;
-    const detected = data[2] || targetLang;
-    const result = { detected, translated };
-    S.cache[k] = result;
-    return result;
-  } catch(e) {
-    console.error('[sklad] translation failed:', e);
-    const fallback = { detected: targetLang, translated: text };
-    S.cache[k] = fallback;
-    return fallback;
+  const cached = S.cache[k];
+  if (cached && !cached.failed) return cached;
+  if (cached && cached.failed && Date.now() - cached.ts < FAIL_TTL) return cached;
+  // Primary with one retry, then the fallback provider.
+  for (let attempt = 0; attempt < 2; attempt++){
+    try { const res = await googleTranslate(text, targetLang); S.cache[k] = res; return res; }
+    catch(e){ if (attempt === 0) await new Promise(r => setTimeout(r, 400)); }
   }
+  try { const res = await lingvaTranslate(text, targetLang); S.cache[k] = res; return res; }
+  catch(e){ console.error('[sklad] translation failed (all providers):', e); }
+  // Mark as a transient failure so it retries later instead of caching the original forever.
+  const failed = { detected: targetLang, translated: text, failed: true, ts: Date.now() };
+  S.cache[k] = failed;
+  return failed;
 }
 
 async function translatePending(){
+  if (!S.user) return;
   const ml = S.user.lang;
   for (const msg of S.messages) {
     const k = `${msg.text}|||${ml}`;
-    if (S.cache[k] !== undefined || S.pending.has(k)) continue;
+    const c = S.cache[k];
+    const good = c && !c.failed;
+    const recentFail = c && c.failed && Date.now() - c.ts < FAIL_TTL;
+    if (good || recentFail || S.pending.has(k)) continue;
     S.pending.add(k);
     translateMessage(msg.text, ml).then(() => {
       S.pending.delete(k);
@@ -712,22 +753,30 @@ function listenMessages(){
   S.unsub = off;
 }
 async function sendMsg(text){
-  if (!text.trim()) return;
+  const t = text.trim();
+  if (!t) return;
   const now = Date.now();
-  if (now - S.lastSend < 500) return; // light anti-spam throttle
+  if (now - S.lastSend < SEND_INTERVAL){ toast('⏳ Aguarde um instante entre mensagens.'); return; }
   S.lastSend = now;
-  console.log('[sklad] ✉️ sending message:', text.trim(), 'to room:', S.roomId);
+  const room = S.roomId;
+  // Atomic multi-path write: the message + the user's lastPost, both server-timestamped.
+  // The Firebase rules read lastPost to enforce a minimum interval per user.
+  const key = push(ref(S.db, `rooms/${room}/messages`)).key;
+  const updates = {};
+  updates[`rooms/${room}/messages/${key}`] = {
+    authorId: S.user.id,
+    authorName: S.user.name,
+    text: t,
+    ts: serverTimestamp(),
+  };
+  updates[`rooms/${room}/lastPost/${S.user.id}`] = serverTimestamp();
   try {
-    const result = await push(ref(S.db, `rooms/${S.roomId}/messages`), {
-      authorId: S.user.id,
-      authorName: S.user.name,
-      text: text.trim(),
-      ts: Date.now(),
-    });
-    console.log('[sklad] ✅ message sent, key:', result.key);
+    await update(ref(S.db), updates);
+    console.log('[sklad] ✅ message sent, key:', key);
   } catch(e) {
     console.error('[sklad] ❌ send failed:', e);
-    toast('⚠️ Erro ao enviar. Verifique a conexão.');
+    S.lastSend = 0; // a genuine failure shouldn't lock them out for a second
+    toast('⚠️ Não enviou. Verifique a conexão ou aguarde um instante.');
   }
 }
 
@@ -737,7 +786,7 @@ function startPresence(){
   stopPresence();
   const meRef = ref(S.db, `rooms/${S.roomId}/presence/${S.user.id}`);
   S.presenceRef = meRef;
-  const write = () => set(meRef, { name: S.user.name, lang: S.user.lang, ts: Date.now() })
+  const write = () => set(meRef, presencePayload())
     .catch(e => console.error('[sklad] presence set failed:', e));
   write();
   try { onDisconnect(meRef).remove(); } catch(e){ console.error(e); }
@@ -754,14 +803,46 @@ function startPresence(){
     renderParticipants();
   }, err => console.error('[sklad] presence listener error:', err));
 }
+function presencePayload(){
+  const d = { name: S.user.name, lang: S.user.lang, ts: Date.now() };
+  if (S.user.color != null) d.color = S.user.color;
+  return d;
+}
 function updatePresence(){
   if (!S.presenceRef) return;
-  set(S.presenceRef, { name: S.user.name, lang: S.user.lang, ts: Date.now() }).catch(()=>{});
+  set(S.presenceRef, presencePayload()).catch(()=>{});
 }
 function stopPresence(){
   if (S.heartbeat){ clearInterval(S.heartbeat); S.heartbeat = null; }
   if (S.presenceUnsub){ try { S.presenceUnsub(); } catch{} S.presenceUnsub = null; }
   if (S.presenceRef){ try { remove(S.presenceRef); } catch{} S.presenceRef = null; }
+}
+
+// ── CONNECTION STATUS ─────────────────────────
+function watchConnection(){
+  if (!S.db || S.connWatch) return;
+  S.connWatch = true;
+  onValue(ref(S.db, '.info/connected'), snap => {
+    const wasOffline = !S.connected;
+    S.connected = snap.val() === true;
+    updateConnUI();
+    if (S.connected && wasOffline && S.screen === 'chat' && S.roomId){
+      // Reconnected: re-assert presence and retry anything that failed while offline.
+      startPresence();
+      translatePending();
+    }
+  });
+}
+function updateConnUI(){
+  const pill = document.getElementById('livePill');
+  if (pill){
+    pill.classList.toggle('offline', !S.connected);
+    pill.innerHTML = S.connected
+      ? '<div class="live-dot"></div>ao vivo'
+      : '<div class="live-dot off"></div>reconectando…';
+  }
+  const dot = document.querySelector('.online-dot');
+  if (dot) dot.classList.toggle('off', !S.connected);
 }
 
 // ── VOICE (Web Speech API) ────────────────────
@@ -841,7 +922,7 @@ function toggleDictation(){
   try { recognition.start(); } catch(e){ S.recognizing = false; updateMicUI(); }
 }
 
-// ── READING-LANGUAGE MENU ─────────────────────
+// ── PROFILE MENU (reading language + color) ───
 function changeLang(code){
   if (!LANGS[code] || code === S.user.lang){ closeLangMenu(); return; }
   S.user.lang = code;
@@ -851,21 +932,40 @@ function changeLang(code){
   render();
   renderMsgs(); renderParticipants(); translatePending();
 }
+function changeColor(idx){
+  S.user.color = idx;
+  try { localStorage.setItem(COLOR_KEY, String(idx)); } catch{}
+  updatePresence();
+  closeLangMenu();
+  render();
+  renderMsgs(); renderParticipants();
+}
 function closeLangMenu(){ document.querySelectorAll('.lang-menu').forEach(e=>e.remove()); }
 function openLangMenu(anchor){
   if (document.querySelector('.lang-menu')){ closeLangMenu(); return; }
   const menu = document.createElement('div');
   menu.className = 'lang-menu';
-  menu.innerHTML = Object.entries(LANGS).map(([code,l]) =>
-    `<div class="lm-opt ${code===S.user.lang?'sel':''}" data-lang="${code}"><span>${l.flag}</span><span>${l.name}</span></div>`
-  ).join('');
+  const myIdx = paletteIdxFor(S.user.id);
+  menu.innerHTML =
+    `<div class="lm-label">Quero ler em</div>` +
+    Object.entries(LANGS).map(([code,l]) =>
+      `<div class="lm-opt ${code===S.user.lang?'sel':''}" data-lang="${code}"><span>${l.flag}</span><span>${l.name}</span></div>`
+    ).join('') +
+    `<div class="lm-sep"></div><div class="lm-label">Sua cor</div>` +
+    `<div class="lm-colors">` +
+    PALETTE.map((p,i) =>
+      `<div class="lm-swatch ${i===myIdx?'sel':''}" data-color="${i}" style="background:${p.av}" title="Cor ${i+1}"></div>`
+    ).join('') +
+    `</div>`;
   document.body.appendChild(menu);
   const r = anchor.getBoundingClientRect();
-  menu.style.left = Math.min(r.left, window.innerWidth - 190) + 'px';
+  menu.style.left = Math.min(r.left, window.innerWidth - 210) + 'px';
   if (r.top > window.innerHeight / 2) menu.style.bottom = (window.innerHeight - r.top + 8) + 'px';
   else menu.style.top = (r.bottom + 8) + 'px';
   menu.querySelectorAll('.lm-opt').forEach(el =>
     el.addEventListener('click', () => changeLang(el.dataset.lang)));
+  menu.querySelectorAll('.lm-swatch').forEach(el =>
+    el.addEventListener('click', () => changeColor(parseInt(el.dataset.color, 10))));
   setTimeout(() => document.addEventListener('click', function h(ev){
     if (!menu.contains(ev.target) && !anchor.contains(ev.target)){ closeLangMenu(); document.removeEventListener('click', h); }
   }), 0);
@@ -1026,7 +1126,9 @@ function renderIdentity(app){
       catch { errEl.innerHTML='<div class="err">Falha ao conectar. Recarregue a página.</div>'; if(btn) btn.textContent='Entrar na sala →'; return; }
     }
     try { localStorage.setItem(NAME_KEY, name); localStorage.setItem(LANG_KEY, selLang); } catch {}
-    S.user = { id: user.uid, name, lang: selLang };
+    let savedColor = null;
+    try { const c = localStorage.getItem(COLOR_KEY); if (c != null) savedColor = parseInt(c, 10); } catch {}
+    S.user = { id: user.uid, name, lang: selLang, color: Number.isInteger(savedColor) ? savedColor : null };
     S.roomId = getOrMakeRoom();
     updateURLHash();
     S.screen='chat'; render(); listenMessages(); startPresence();
@@ -1092,7 +1194,7 @@ function renderChatShell(app){
           Mensagens <span class="sep">/</span> <b>Sala ${S.roomId}</b>
         </div>
         <div style="display:flex;align-items:center;">
-          <div class="live-pill">
+          <div class="live-pill" id="livePill">
             <div class="live-dot"></div>
             ao vivo
           </div>
@@ -1143,8 +1245,6 @@ function renderChatShell(app){
     S.messages = [];
     S.cache = {};
     S.pending = new Set();
-    S.userColors = {};
-    S.colorIdx = 0;
     S.spoken = new Set();
     S.participants = [];
     updateURLHash();
@@ -1169,6 +1269,7 @@ function renderChatShell(app){
   if (SR){ const mb=document.getElementById('micBtn'); if(mb) mb.addEventListener('click',toggleDictation); }
   if (TTS_OK){ const sp=document.getElementById('speakBtn'); if(sp){ sp.addEventListener('click',toggleSpeak); updateSpeakUI(); } }
   const meBar=document.querySelector('.sb-me'); if(meBar) meBar.addEventListener('click',()=>openLangMenu(meBar));
+  updateConnUI();
 }
 
 // ── RENDER MESSAGES ───────────────────────────
@@ -1299,11 +1400,17 @@ function renderParticipants(){
   }
 
   // Saved identity → skip the name/language screen on return visits.
-  let savedName = null, savedLang = null;
-  try { savedName = localStorage.getItem(NAME_KEY); savedLang = localStorage.getItem(LANG_KEY); } catch {}
+  let savedName = null, savedLang = null, savedColor = null;
+  try {
+    savedName = localStorage.getItem(NAME_KEY);
+    savedLang = localStorage.getItem(LANG_KEY);
+    const c = localStorage.getItem(COLOR_KEY); if (c != null) savedColor = parseInt(c, 10);
+  } catch {}
+  if (!Number.isInteger(savedColor)) savedColor = null;
   const hasSaved = savedName && savedLang && LANGS[savedLang];
 
   if (cfg && initFb(cfg)) {
+    watchConnection();
     S.screen = hasSaved ? 'loading' : 'id';
     render();
     let user = null;
@@ -1312,7 +1419,7 @@ function renderParticipants(){
       toast('⚠️ Falha na autenticação. Ative o login Anônimo no Firebase Auth.');
       S.screen = 'id'; render();
     } else if (hasSaved) {
-      S.user = { id: user.uid, name: savedName, lang: savedLang };
+      S.user = { id: user.uid, name: savedName, lang: savedLang, color: savedColor };
       S.roomId = getOrMakeRoom();
       updateURLHash();
       S.screen = 'chat'; render(); listenMessages(); startPresence();
