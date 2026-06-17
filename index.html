@@ -395,6 +395,39 @@ textarea::placeholder,.inp::placeholder{color:var(--t3);}
 /* spinner */
 .spinner{width:16px;height:16px;border:2px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:spin .6s linear infinite;}
 
+/* ── VOICE CONTROLS ── */
+.mic-btn{
+  width:34px;height:34px;background:var(--sf3);color:var(--t2);
+  border:1px solid var(--border);border-radius:10px;cursor:pointer;flex-shrink:0;
+  display:flex;align-items:center;justify-content:center;transition:all .15s;
+}
+.mic-btn:hover{border-color:var(--dark);color:var(--dark);background:var(--surface);}
+.mic-btn.rec{background:#FEE2E2;border-color:#FCA5A5;color:#DC2626;animation:pulse 1.4s infinite;}
+.hdr-btn{
+  height:32px;min-width:32px;padding:0 7px;background:var(--sf2);color:var(--t2);
+  border:1px solid var(--border);border-radius:9px;cursor:pointer;font-size:15px;line-height:1;
+  display:flex;align-items:center;justify-content:center;transition:all .15s;margin-left:8px;
+}
+.hdr-btn:hover{border-color:var(--dark);}
+.hdr-btn.on{background:var(--dark);border-color:var(--dark);}
+
+/* ── READING-LANGUAGE POPOVER ── */
+.sb-me{cursor:pointer;}
+.sb-me:hover{background:var(--sf3);}
+.me-caret{opacity:.5;font-size:13px;}
+.lang-menu{
+  position:fixed;z-index:1000;background:var(--surface);
+  border:1px solid var(--border);border-radius:12px;box-shadow:var(--sh2);
+  padding:6px;min-width:172px;animation:fadeUp .15s ease both;
+}
+.lm-opt{
+  display:flex;align-items:center;gap:9px;padding:8px 10px;border-radius:8px;
+  font-size:13.5px;font-weight:500;color:var(--t2);cursor:pointer;transition:all .12s;
+}
+.lm-opt:hover{background:var(--sf2);color:var(--t1);}
+.lm-opt.sel{background:var(--dark);color:#fff;}
+.lm-opt span:first-child{font-size:16px;}
+
 /* ════════════════════════════════
    RESPONSIVE — mobile (< 768px)
 ════════════════════════════════ */
@@ -489,7 +522,8 @@ textarea::placeholder,.inp::placeholder{color:var(--t3);}
 <div id="app"></div>
 <script type="module">
 import { initializeApp, getApps, getApp } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
-import { getDatabase, ref, push, onValue, query, orderByChild, limitToLast } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js';
+import { getDatabase, ref, push, onValue, set, remove, onDisconnect } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js';
+import { getAuth, signInAnonymously, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js';
 
 // ── CONSTANTS ─────────────────────────────────
 const LANGS = {
@@ -510,8 +544,12 @@ const PALETTE = [
   {av:'#0E7490', avBg:'#CFFAFE', bg:'#ECFEFF', bd:'#A5F3FC'},
 ];
 
-const FB_KEY = 'sklad_fb_v3';
-const MODEL  = 'claude-sonnet-4-20250514';
+const FB_KEY   = 'sklad_fb_v3';
+const NAME_KEY = 'sklad_user_name';
+const LANG_KEY = 'sklad_user_lang';
+
+// BCP-47 codes for the Web Speech API (recognition + synthesis)
+const SPEECH_LANG = { pt:'pt-BR', en:'en-US', es:'es-ES', fr:'fr-FR', de:'de-DE' };
 
 // Embedded Firebase config — set this to skip the setup screen for everyone.
 // Set to null to require manual config (the original flow).
@@ -528,9 +566,11 @@ const EMBEDDED_CFG = {
 
 // ── STATE ─────────────────────────────────────
 const S = {
-  screen:'setup', db:null, roomId:null, user:null,
+  screen:'setup', db:null, auth:null, authReady:false, roomId:null, user:null,
   messages:[], cache:{}, pending:new Set(),
   userColors:{}, colorIdx:0, unsub:null,
+  participants:[], presenceRef:null, presenceUnsub:null, heartbeat:null,
+  speakOn:false, spoken:new Set(), recognizing:false, lastSend:0,
 };
 
 // ── FIREBASE ──────────────────────────────────
@@ -539,8 +579,24 @@ const saveCfg = c => { try{localStorage.setItem(FB_KEY,JSON.stringify(c));}catch
 function initFb(cfg){
   try{
     const app = getApps().length ? getApp() : initializeApp(cfg);
-    S.db = getDatabase(app); return true;
+    S.db = getDatabase(app);
+    S.auth = getAuth(app);
+    return true;
   }catch(e){console.error(e);return false;}
+}
+
+// Anonymous sign-in — resolves with the Firebase user once it's ready.
+function ensureAuth(){
+  return new Promise((resolve, reject) => {
+    let done = false;
+    onAuthStateChanged(S.auth, user => {
+      if (user && !done){ done = true; S.authReady = true; resolve(user); }
+    });
+    signInAnonymously(S.auth).catch(e => {
+      console.error('[sklad] ❌ anonymous auth failed:', e);
+      if (!done){ done = true; reject(e); }
+    });
+  });
 }
 
 // ── ROOM ──────────────────────────────────────
@@ -624,6 +680,7 @@ async function translatePending(){
       S.pending.delete(k);
       renderMsgs();
       renderParticipants();
+      speakIncoming();
     });
   }
 }
@@ -648,7 +705,7 @@ function listenMessages(){
     const trimmed = msgs.slice(-100);
     console.log(`[sklad] 📨 onValue fired — received ${trimmed.length} messages`);
     S.messages = trimmed;
-    renderMsgs(); renderParticipants(); translatePending();
+    renderMsgs(); renderParticipants(); translatePending(); speakIncoming();
   }, err => {
     console.error('[sklad] ❌ Firebase listener error:', err);
   });
@@ -656,6 +713,9 @@ function listenMessages(){
 }
 async function sendMsg(text){
   if (!text.trim()) return;
+  const now = Date.now();
+  if (now - S.lastSend < 500) return; // light anti-spam throttle
+  S.lastSend = now;
   console.log('[sklad] ✉️ sending message:', text.trim(), 'to room:', S.roomId);
   try {
     const result = await push(ref(S.db, `rooms/${S.roomId}/messages`), {
@@ -671,6 +731,146 @@ async function sendMsg(text){
   }
 }
 
+// ── PRESENCE ──────────────────────────────────
+function startPresence(){
+  if (!S.db || !S.user || !S.roomId) return;
+  stopPresence();
+  const meRef = ref(S.db, `rooms/${S.roomId}/presence/${S.user.id}`);
+  S.presenceRef = meRef;
+  const write = () => set(meRef, { name: S.user.name, lang: S.user.lang, ts: Date.now() })
+    .catch(e => console.error('[sklad] presence set failed:', e));
+  write();
+  try { onDisconnect(meRef).remove(); } catch(e){ console.error(e); }
+  S.heartbeat = setInterval(write, 25000); // keep ts fresh; stale tabs get filtered out
+  const allRef = ref(S.db, `rooms/${S.roomId}/presence`);
+  S.presenceUnsub = onValue(allRef, snap => {
+    const now = Date.now();
+    const list = [];
+    snap.forEach(c => {
+      const v = c.val();
+      if (v && (!v.ts || now - v.ts < 70000)) list.push({ id: c.key, ...v });
+    });
+    S.participants = list;
+    renderParticipants();
+  }, err => console.error('[sklad] presence listener error:', err));
+}
+function updatePresence(){
+  if (!S.presenceRef) return;
+  set(S.presenceRef, { name: S.user.name, lang: S.user.lang, ts: Date.now() }).catch(()=>{});
+}
+function stopPresence(){
+  if (S.heartbeat){ clearInterval(S.heartbeat); S.heartbeat = null; }
+  if (S.presenceUnsub){ try { S.presenceUnsub(); } catch{} S.presenceUnsub = null; }
+  if (S.presenceRef){ try { remove(S.presenceRef); } catch{} S.presenceRef = null; }
+}
+
+// ── VOICE (Web Speech API) ────────────────────
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+const TTS_OK = 'speechSynthesis' in window;
+let recognition = null;
+
+function speak(text, lang){
+  if (!TTS_OK || !text) return;
+  try {
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = SPEECH_LANG[lang] || lang;
+    window.speechSynthesis.speak(u);
+  } catch(e){ console.error('[sklad] tts failed:', e); }
+}
+function speakIncoming(){
+  if (!S.speakOn || !S.user) return;
+  const ml = S.user.lang;
+  for (const msg of S.messages){
+    if (S.spoken.has(msg.id)) continue;
+    const isOwn = msg.authorId === S.user.id || msg.authorName === S.user.name;
+    if (isOwn){ S.spoken.add(msg.id); continue; }
+    const xl = S.cache[`${msg.text}|||${ml}`];
+    if (!xl) continue; // translation not ready — retried after it resolves
+    speak(xl.translated, ml);
+    S.spoken.add(msg.id);
+  }
+}
+function toggleSpeak(){
+  S.speakOn = !S.speakOn;
+  if (S.speakOn){
+    for (const m of S.messages) S.spoken.add(m.id); // baseline: skip the backlog
+    toast('🔊 Lendo novas mensagens em voz alta');
+  } else {
+    try { window.speechSynthesis.cancel(); } catch{}
+    toast('🔇 Voz desativada');
+  }
+  updateSpeakUI();
+}
+function updateSpeakUI(){
+  const b = document.getElementById('speakBtn');
+  if (!b) return;
+  b.classList.toggle('on', S.speakOn);
+  b.textContent = S.speakOn ? '🔊' : '🔈';
+  b.title = S.speakOn ? 'Desativar leitura em voz alta' : 'Ler novas mensagens em voz alta';
+}
+function updateMicUI(){
+  const b = document.getElementById('micBtn');
+  if (!b) return;
+  b.classList.toggle('rec', S.recognizing);
+  b.title = S.recognizing ? 'Parar ditado' : 'Falar';
+}
+function toggleDictation(){
+  if (!SR) return;
+  if (S.recognizing){ try { recognition.stop(); } catch{} return; }
+  recognition = new SR();
+  recognition.lang = SPEECH_LANG[S.user.lang] || 'pt-BR';
+  recognition.interimResults = true;
+  recognition.continuous = false;
+  const ta = document.getElementById('chatTa');
+  const base = ta ? ta.value.trim() : '';
+  recognition.onresult = e => {
+    let interim = '', final = '';
+    for (let i = e.resultIndex; i < e.results.length; i++){
+      const t = e.results[i][0].transcript;
+      if (e.results[i].isFinal) final += t; else interim += t;
+    }
+    if (ta){
+      ta.value = `${base} ${final} ${interim}`.replace(/\s+/g,' ').trim();
+      ta.style.height = 'auto';
+      ta.style.height = Math.min(ta.scrollHeight, 100) + 'px';
+    }
+  };
+  recognition.onend   = () => { S.recognizing = false; updateMicUI(); };
+  recognition.onerror = () => { S.recognizing = false; updateMicUI(); };
+  S.recognizing = true; updateMicUI();
+  try { recognition.start(); } catch(e){ S.recognizing = false; updateMicUI(); }
+}
+
+// ── READING-LANGUAGE MENU ─────────────────────
+function changeLang(code){
+  if (!LANGS[code] || code === S.user.lang){ closeLangMenu(); return; }
+  S.user.lang = code;
+  try { localStorage.setItem(LANG_KEY, code); } catch{}
+  updatePresence();
+  closeLangMenu();
+  render();
+  renderMsgs(); renderParticipants(); translatePending();
+}
+function closeLangMenu(){ document.querySelectorAll('.lang-menu').forEach(e=>e.remove()); }
+function openLangMenu(anchor){
+  if (document.querySelector('.lang-menu')){ closeLangMenu(); return; }
+  const menu = document.createElement('div');
+  menu.className = 'lang-menu';
+  menu.innerHTML = Object.entries(LANGS).map(([code,l]) =>
+    `<div class="lm-opt ${code===S.user.lang?'sel':''}" data-lang="${code}"><span>${l.flag}</span><span>${l.name}</span></div>`
+  ).join('');
+  document.body.appendChild(menu);
+  const r = anchor.getBoundingClientRect();
+  menu.style.left = Math.min(r.left, window.innerWidth - 190) + 'px';
+  if (r.top > window.innerHeight / 2) menu.style.bottom = (window.innerHeight - r.top + 8) + 'px';
+  else menu.style.top = (r.bottom + 8) + 'px';
+  menu.querySelectorAll('.lm-opt').forEach(el =>
+    el.addEventListener('click', () => changeLang(el.dataset.lang)));
+  setTimeout(() => document.addEventListener('click', function h(ev){
+    if (!menu.contains(ev.target) && !anchor.contains(ev.target)){ closeLangMenu(); document.removeEventListener('click', h); }
+  }), 0);
+}
+
 // ── UTILS ─────────────────────────────────────
 const initials = n => n.trim().split(/\s+/).map(w=>w[0]).join('').toUpperCase().slice(0,2);
 const fmtTime  = ts => new Date(ts).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
@@ -681,14 +881,29 @@ function toast(m){
   const t=document.createElement('div');t.className='toast';t.textContent=m;
   document.body.appendChild(t);setTimeout(()=>t.remove(),2800);
 }
-const randId=()=>Math.random().toString(36).slice(2,12);
 
 // ── RENDER ROUTER ─────────────────────────────
 function render(){
   const a=document.getElementById('app');
-  if(S.screen==='setup')     renderSetup(a);
-  else if(S.screen==='id')   renderIdentity(a);
-  else if(S.screen==='chat') renderChatShell(a);
+  if(S.screen==='setup')       renderSetup(a);
+  else if(S.screen==='loading') renderLoading(a);
+  else if(S.screen==='id')     renderIdentity(a);
+  else if(S.screen==='chat')   renderChatShell(a);
+}
+
+// ── LOADING SCREEN ────────────────────────────
+function renderLoading(app){
+  app.innerHTML=`
+  <div class="auth-shell">
+    <div style="display:flex;flex-direction:column;align-items:center;gap:18px;">
+      <div class="brand" style="background:var(--dark);border-color:rgba(255,255,255,.12);">
+        <div class="brand-icon">S</div>
+        <span class="brand-name">Sklad</span>
+      </div>
+      <div class="spinner" style="width:22px;height:22px;border-color:rgba(15,23,42,.15);border-top-color:var(--dark);"></div>
+      <div style="font-size:13px;color:var(--t3);">Conectando…</div>
+    </div>
+  </div>`;
 }
 
 // ── SETUP SCREEN ──────────────────────────────
@@ -711,7 +926,7 @@ function renderSetup(app){
             <div class="lang-chip">🇩🇪 Deutsch</div>
           </div>
         </div>
-        <div class="auth-footer">Firebase + Claude AI</div>
+        <div class="auth-footer">Firebase + Google Translate</div>
       </div>
       <div class="auth-right">
         <div class="auth-title">Configurar Firebase</div>
@@ -798,20 +1013,23 @@ function renderIdentity(app){
     });
   });
 
-  const join=()=>{
-    const name=document.getElementById('nameIn').value.trim();
-    if(!name){document.getElementById('idErr').innerHTML='<div class="err">Por favor, insira seu nome.</div>';return;}
-    // Persist user ID across refreshes — keeps own-message detection stable.
-    let uid = null;
-    try { uid = localStorage.getItem('sklad_user_id'); } catch {}
-    if (!uid) {
-      uid = randId();
-      try { localStorage.setItem('sklad_user_id', uid); } catch {}
+  const join = async () => {
+    const name = document.getElementById('nameIn').value.trim();
+    const errEl = document.getElementById('idErr');
+    if (!name){ errEl.innerHTML='<div class="err">Por favor, insira seu nome.</div>'; return; }
+    const btn = document.getElementById('joinBtn');
+    // The stable identity is the Firebase anonymous uid (persists across refreshes).
+    let user = S.auth && S.auth.currentUser;
+    if (!user){
+      if (btn) btn.innerHTML = '<div class="spinner"></div>';
+      try { user = await ensureAuth(); }
+      catch { errEl.innerHTML='<div class="err">Falha ao conectar. Recarregue a página.</div>'; if(btn) btn.textContent='Entrar na sala →'; return; }
     }
-    S.user = { id: uid, name, lang: selLang };
+    try { localStorage.setItem(NAME_KEY, name); localStorage.setItem(LANG_KEY, selLang); } catch {}
+    S.user = { id: user.uid, name, lang: selLang };
     S.roomId = getOrMakeRoom();
     updateURLHash();
-    S.screen='chat'; render(); listenMessages();
+    S.screen='chat'; render(); listenMessages(); startPresence();
   };
   document.getElementById('joinBtn').addEventListener('click',join);
   document.getElementById('nameIn').addEventListener('keydown',e=>{if(e.key==='Enter')join();});
@@ -856,11 +1074,11 @@ function renderChatShell(app){
         </div>
       </div>
 
-      <div class="sb-me">
+      <div class="sb-me" title="Trocar idioma de leitura">
         <div class="me-av">${initials(S.user.name)}</div>
         <div class="me-info">
           <div class="me-name">${esc(S.user.name)}</div>
-          <div class="me-lang">lendo em ${lang.flag} ${lang.name}</div>
+          <div class="me-lang">lendo em ${lang.flag} ${lang.name} <span class="me-caret">⌄</span></div>
         </div>
         <div class="online-dot"></div>
       </div>
@@ -873,9 +1091,12 @@ function renderChatShell(app){
         <div class="breadcrumb">
           Mensagens <span class="sep">/</span> <b>Sala ${S.roomId}</b>
         </div>
-        <div class="live-pill">
-          <div class="live-dot"></div>
-          ao vivo
+        <div style="display:flex;align-items:center;">
+          <div class="live-pill">
+            <div class="live-dot"></div>
+            ao vivo
+          </div>
+          ${TTS_OK ? `<button class="hdr-btn" id="speakBtn" title="Ler novas mensagens em voz alta">🔈</button>` : ''}
         </div>
       </div>
 
@@ -890,6 +1111,11 @@ function renderChatShell(app){
       <div class="input-zone">
         <div class="input-box">
           <textarea class="chat-ta" id="chatTa" placeholder="Escreva na sua língua…" rows="1"></textarea>
+          ${SR ? `<button class="mic-btn" id="micBtn" title="Falar">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/>
+            </svg>
+          </button>` : ''}
           <button class="send-btn" id="sendBtn">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
               <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
@@ -903,24 +1129,28 @@ function renderChatShell(app){
   </div>`;
 
   // copy link
-  const copyLink=()=>{const url=buildShareURL();navigator.clipboard.writeText(url).then(()=>toast('🔗 Link copiado! Inclui a config do Firebase — só compartilhar.')).catch(()=>toast(url));};
+  const copyLink=()=>{const url=buildShareURL();navigator.clipboard.writeText(url).then(()=>toast('🔗 Link da sala copiado! Só compartilhar.')).catch(()=>toast(url));};
   document.getElementById('copyBtn').addEventListener('click',copyLink);
   document.getElementById('roomChip').addEventListener('click',copyLink);
 
   // new room — generates a fresh room ID and switches to it
   document.getElementById('newRoomBtn').addEventListener('click', () => {
     const fresh = 'room-' + Math.random().toString(36).slice(2,8);
-    // detach current listener and reset message state
+    // detach current listeners and reset room state
     if (S.unsub) { try { S.unsub(); } catch{} S.unsub = null; }
+    stopPresence();
     S.roomId = fresh;
     S.messages = [];
     S.cache = {};
     S.pending = new Set();
     S.userColors = {};
     S.colorIdx = 0;
+    S.spoken = new Set();
+    S.participants = [];
     updateURLHash();
     render();
     listenMessages();
+    startPresence();
     setTimeout(() => {
       navigator.clipboard.writeText(buildShareURL())
         .then(() => toast(`✨ Sala ${fresh} criada! Link copiado.`))
@@ -934,6 +1164,11 @@ function renderChatShell(app){
   document.getElementById('sendBtn').addEventListener('click',submit);
   ta.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();submit();}});
   ta.addEventListener('input',()=>{ta.style.height='auto';ta.style.height=Math.min(ta.scrollHeight,100)+'px';});
+
+  // voice + reading-language controls
+  if (SR){ const mb=document.getElementById('micBtn'); if(mb) mb.addEventListener('click',toggleDictation); }
+  if (TTS_OK){ const sp=document.getElementById('speakBtn'); if(sp){ sp.addEventListener('click',toggleSpeak); updateSpeakUI(); } }
+  const meBar=document.querySelector('.sb-me'); if(meBar) meBar.addEventListener('click',()=>openLangMenu(meBar));
 }
 
 // ── RENDER MESSAGES ───────────────────────────
@@ -1022,35 +1257,35 @@ function renderMsgs(){
 // ── RENDER PARTICIPANTS ───────────────────────
 function renderParticipants(){
   const el = document.getElementById('sbParts');
-  if (!el) return;
-  const seen = {};
-  // collect unique users (excluding self), keeping their last message for lang detection
-  for (const msg of S.messages) {
-    if (msg.authorId !== S.user.id) seen[msg.authorId] = msg;
-  }
-  const users = Object.values(seen);
-  if (!users.length) { el.innerHTML='<div style="font-size:12px;color:var(--t3)">Aguardando participantes…</div>'; return; }
+  if (!el || !S.user) return;
+  // Real presence: everyone currently connected to the room (minus me).
+  const others = (S.participants || []).filter(p => p.id !== S.user.id);
+  if (!others.length){ el.innerHTML='<div style="font-size:12px;color:var(--t3)">Aguardando participantes…</div>'; return; }
   const ml = S.user.lang;
-  el.innerHTML = users.map(u => {
-    const col = userColor(u.authorId);
-    // Try to show detected lang from their last message
-    const ck = `${u.text}|||${ml}`;
-    const xl = S.cache[ck];
-    const detected = xl?.detected;
-    const detLang = detected ? (LANGS[detected] || null) : null;
+  // most recent message per author → detect the language they write in
+  const lastByAuthor = {};
+  for (const msg of S.messages) lastByAuthor[msg.authorId] = msg;
+  el.innerHTML = others.map(u => {
+    const col = userColor(u.id);
+    let sub = (u.lang && LANGS[u.lang]) ? `lê em ${LANGS[u.lang].flag} ${LANGS[u.lang].name}` : 'online';
+    const last = lastByAuthor[u.id];
+    if (last){
+      const det = S.cache[`${last.text}|||${ml}`]?.detected;
+      if (det && LANGS[det]) sub = `escreve em ${LANGS[det].flag} ${LANGS[det].name}`;
+    }
     return `
       <div class="participant">
-        <div class="p-av" style="background:${col.avBg};color:${col.av}">${initials(u.authorName)}</div>
+        <div class="p-av" style="background:${col.avBg};color:${col.av}">${initials(u.name)}</div>
         <div class="p-info">
-          <div class="p-name">${esc(u.authorName)}</div>
-          <div class="p-lang">${detLang ? `escreve em ${detLang.flag} ${detLang.name}` : 'online'}</div>
+          <div class="p-name">${esc(u.name)}</div>
+          <div class="p-lang">${sub}</div>
         </div>
       </div>`;
   }).join('');
 }
 
 // ── BOOT ──────────────────────────────────────
-(function boot(){
+(async function boot(){
   let cfg = null;
   if (EMBEDDED_CFG && EMBEDDED_CFG.databaseURL) {
     cfg = EMBEDDED_CFG;
@@ -1062,21 +1297,39 @@ function renderParticipants(){
     }
     if (!cfg) cfg = loadCfg();
   }
-  if (cfg && initFb(cfg)) S.screen = 'id';
-  render();
 
-  // Refresh listener when tab becomes visible again (mobile/desktop tab switching)
+  // Saved identity → skip the name/language screen on return visits.
+  let savedName = null, savedLang = null;
+  try { savedName = localStorage.getItem(NAME_KEY); savedLang = localStorage.getItem(LANG_KEY); } catch {}
+  const hasSaved = savedName && savedLang && LANGS[savedLang];
+
+  if (cfg && initFb(cfg)) {
+    S.screen = hasSaved ? 'loading' : 'id';
+    render();
+    let user = null;
+    try { user = await ensureAuth(); } catch { user = null; }
+    if (!user) {
+      toast('⚠️ Falha na autenticação. Ative o login Anônimo no Firebase Auth.');
+      S.screen = 'id'; render();
+    } else if (hasSaved) {
+      S.user = { id: user.uid, name: savedName, lang: savedLang };
+      S.roomId = getOrMakeRoom();
+      updateURLHash();
+      S.screen = 'chat'; render(); listenMessages(); startPresence();
+    }
+    // otherwise: stay on the identity screen; join() reuses the signed-in user
+  } else {
+    S.screen = 'setup'; render();
+  }
+
+  // Reconnect listeners + presence when the tab comes back (mobile/desktop tab switching)
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible' && S.screen === 'chat' && S.db && S.roomId) {
-      console.log('[sklad] 👁️ tab visible — refreshing listener');
-      listenMessages();
+      listenMessages(); startPresence();
     }
   });
   window.addEventListener('focus', () => {
-    if (S.screen === 'chat' && S.db && S.roomId) {
-      console.log('[sklad] 🔁 window focus — refreshing listener');
-      listenMessages();
-    }
+    if (S.screen === 'chat' && S.db && S.roomId) { listenMessages(); startPresence(); }
   });
 })();
 </script>
