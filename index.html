@@ -581,11 +581,14 @@ textarea::placeholder,.inp::placeholder{color:var(--t3);}
   }
   .sb-top { border: none; padding: 0; flex-shrink: 0; }
   .sb-block, .sb-block-grow, .sb-me { border: none; padding: 0; background: transparent; }
-  .sb-block { flex: 1; min-width: 0; }
+  .sb-block { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; }
   .sec-lbl { display: none; }
   .sb-block-grow { display: none; } /* hide participants list on mobile */
-  .room-row { gap: 6px; }
+  .room-row { gap: 6px; flex: 1; min-width: 0; }
   .room-id-chip { max-width: none; }
+  /* compact icon-only actions so they fit and stay visible in the top bar */
+  .new-room-btn, .voice-enter-btn { width: auto; margin-top: 0; padding: 8px 10px; flex-shrink: 0; }
+  .new-room-btn span, .voice-enter-btn span { display: none; }
   .sb-me {
     flex-shrink: 0;
     gap: 6px;
@@ -687,7 +690,7 @@ const S = {
   messages:[], cache:{}, pending:new Set(),
   unsub:null, connected:true, connWatch:false,
   participants:[], presenceRef:null, presenceUnsub:null, heartbeat:null,
-  speakOn:false, spoken:new Set(), recognizing:false, lastSend:0,
+  recognizing:false, lastSend:0,
   voice:{ live:[], utterances:[], seen:new Set(), session:null, mic:false,
           recog:null, timer:null, hb:null, unsubs:[], meRef:null, liveWrite:null,
           speakQ:[], speaking:false, closed:false },
@@ -828,7 +831,6 @@ async function translatePending(){
       S.pending.delete(k);
       renderMsgs();
       renderParticipants();
-      speakIncoming();
     });
   }
 }
@@ -853,7 +855,7 @@ function listenMessages(){
     const trimmed = msgs.slice(-100);
     console.log(`[sklad] 📨 onValue fired — received ${trimmed.length} messages`);
     S.messages = trimmed;
-    renderMsgs(); renderParticipants(); translatePending(); speakIncoming();
+    renderMsgs(); renderParticipants(); translatePending();
   }, err => {
     console.error('[sklad] ❌ Firebase listener error:', err);
   });
@@ -957,45 +959,6 @@ const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 const TTS_OK = 'speechSynthesis' in window;
 let recognition = null;
 
-function speak(text, lang){
-  if (!TTS_OK || !text) return;
-  try {
-    const u = new SpeechSynthesisUtterance(text);
-    u.lang = SPEECH_LANG[lang] || lang;
-    window.speechSynthesis.speak(u);
-  } catch(e){ console.error('[sklad] tts failed:', e); }
-}
-function speakIncoming(){
-  if (!S.speakOn || !S.user) return;
-  const ml = S.user.lang;
-  for (const msg of S.messages){
-    if (S.spoken.has(msg.id)) continue;
-    const isOwn = msg.authorId === S.user.id || msg.authorName === S.user.name;
-    if (isOwn){ S.spoken.add(msg.id); continue; }
-    const xl = S.cache[`${msg.text}|||${ml}`];
-    if (!xl) continue; // translation not ready — retried after it resolves
-    speak(xl.translated, ml);
-    S.spoken.add(msg.id);
-  }
-}
-function toggleSpeak(){
-  S.speakOn = !S.speakOn;
-  if (S.speakOn){
-    for (const m of S.messages) S.spoken.add(m.id); // baseline: skip the backlog
-    toast('🔊 Lendo novas mensagens em voz alta');
-  } else {
-    try { window.speechSynthesis.cancel(); } catch{}
-    toast('🔇 Voz desativada');
-  }
-  updateSpeakUI();
-}
-function updateSpeakUI(){
-  const b = document.getElementById('speakBtn');
-  if (!b) return;
-  b.classList.toggle('on', S.speakOn);
-  b.textContent = S.speakOn ? '🔊' : '🔈';
-  b.title = S.speakOn ? 'Desativar leitura em voz alta' : 'Ler novas mensagens em voz alta';
-}
 function updateMicUI(){
   const b = document.getElementById('micBtn');
   if (!b) return;
@@ -1259,6 +1222,8 @@ function onVoiceClosed(){
 }
 
 // ── VOICE ROOM UI ─────────────────────────────
+const MIC_ON_SVG  = `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>`;
+const MIC_OFF_SVG = `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="2" y1="2" x2="22" y2="22"/><path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6"/><path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2a7 7 0 0 1-.11 1.23"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>`;
 function renderVoice(app){
   const lang = LANGS[S.user.lang];
   if (S.voice.closed){
@@ -1292,9 +1257,7 @@ function renderVoice(app){
     </div>
     <div class="voice-bar">
       <div class="voice-owncap" id="vOwnCap"></div>
-      <button class="voice-mic" id="vMic" aria-label="Microfone">
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
-      </button>
+      <button class="voice-mic" id="vMic" aria-label="Microfone"></button>
       <div class="voice-hint">Você ouve em ${lang.flag} ${lang.name} <span class="vh-dot">·</span> <span id="vMicLabel">mic mutado, toque para falar</span><br><span class="vh-tip">Fones recomendados para evitar eco.</span></div>
     </div>
   </div>`;
@@ -1344,7 +1307,7 @@ function showOwnCaption(text){
 }
 function updateMicRoomUI(){
   const b = document.getElementById('vMic'); const lbl = document.getElementById('vMicLabel');
-  if (b) b.classList.toggle('live', !!S.voice.mic);
+  if (b){ b.classList.toggle('live', !!S.voice.mic); b.innerHTML = S.voice.mic ? MIC_ON_SVG : MIC_OFF_SVG; }
   if (lbl) lbl.textContent = S.voice.mic ? 'ao vivo · toque para mutar' : 'mic mutado, toque para falar';
 }
 
@@ -1569,7 +1532,6 @@ function renderChatShell(app){
             <div class="live-dot"></div>
             ao vivo
           </div>
-          ${TTS_OK ? `<button class="hdr-btn" id="speakBtn" title="Ler novas mensagens em voz alta">🔈</button>` : ''}
         </div>
       </div>
 
@@ -1631,14 +1593,21 @@ function renderChatShell(app){
 
   // send
   const ta=document.getElementById('chatTa');
-  const submit=async()=>{const t=ta.value.trim();if(!t)return;ta.value='';ta.style.height='auto';await sendMsg(t);};
+  const submit=async()=>{
+    const t=ta.value.trim();
+    if(!t)return;
+    // stop any live voice dictation so a trailing result doesn't refill the field after send
+    if(S.recognizing && recognition){ try{ recognition.onresult=null; recognition.onend=null; recognition.stop(); }catch{} S.recognizing=false; updateMicUI(); }
+    ta.value='';
+    ta.style.height='auto';
+    await sendMsg(t);
+  };
   document.getElementById('sendBtn').addEventListener('click',submit);
   ta.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();submit();}});
   ta.addEventListener('input',()=>{ta.style.height='auto';ta.style.height=Math.min(ta.scrollHeight,100)+'px';});
 
   // voice + reading-language controls
   if (SR){ const mb=document.getElementById('micBtn'); if(mb) mb.addEventListener('click',toggleDictation); }
-  if (TTS_OK){ const sp=document.getElementById('speakBtn'); if(sp){ sp.addEventListener('click',toggleSpeak); updateSpeakUI(); } }
   const meBar=document.querySelector('.sb-me'); if(meBar) meBar.addEventListener('click',()=>openLangMenu(meBar));
   const vBtn=document.getElementById('voiceEnterBtn'); if(vBtn) vBtn.addEventListener('click', enterVoice);
   updateConnUI();
