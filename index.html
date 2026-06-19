@@ -959,6 +959,30 @@ const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 const TTS_OK = 'speechSynthesis' in window;
 let recognition = null;
 
+// ── TTS reliability helpers ───────────────────
+// Voices load async (Chrome): preload so the first utterance actually speaks.
+let VOICES = [];
+function loadVoices(){ try { VOICES = window.speechSynthesis.getVoices() || []; } catch { VOICES = []; } }
+function pickVoice(lang){
+  const code = (SPEECH_LANG[lang] || lang).toLowerCase();
+  const base = code.split('-')[0];
+  return VOICES.find(v => v.lang && v.lang.toLowerCase() === code)
+      || VOICES.find(v => v.lang && v.lang.toLowerCase().startsWith(base)) || null;
+}
+let audioUnlocked = false;
+// Browsers block audio until a user gesture. Call this from a click/tap (entering
+// the voice room or tapping the mic) so later translated speech is allowed to play.
+function unlockAudio(){
+  if (!TTS_OK || audioUnlocked) return;
+  try {
+    window.speechSynthesis.resume();
+    const u = new SpeechSynthesisUtterance(' '); u.volume = 0;
+    window.speechSynthesis.speak(u);
+    audioUnlocked = true;
+  } catch {}
+}
+if (TTS_OK){ loadVoices(); try { window.speechSynthesis.addEventListener('voiceschanged', loadVoices); } catch {} }
+
 function updateMicUI(){
   const b = document.getElementById('micBtn');
   if (!b) return;
@@ -1057,6 +1081,8 @@ const voiceRef = path => ref(S.db, `rooms/${S.roomId}/voice/${path}`);
 
 function enterVoice(){
   if (!S.db || !S.user || !S.roomId) return;
+  unlockAudio(); // this runs inside the button-tap gesture, so audio is allowed afterwards
+  document.addEventListener('pointerdown', unlockAudio, { once: true }); // fallback: first tap anywhere
   S.voice.closed = false;
   S.screen = 'voice';
   render();
@@ -1127,6 +1153,7 @@ async function startVoiceSession(){
 
 function micToggle(){
   if (S.voice.closed) return;
+  unlockAudio();
   if (!SR){ toast('🎤 O microfone ao vivo precisa de Chrome ou Edge.'); return; }
   if (S.voice.mic) stopMic(); else goLive();
 }
@@ -1189,11 +1216,18 @@ function drainSpeak(){
   S.voice.speaking = true;
   // duck: pause our own mic while the translation plays, to avoid echo loops
   if (S.voice.recog){ try { S.voice.recog.onend = null; S.voice.recog.stop(); } catch{} S.voice.recog = null; }
-  const utt = new SpeechSynthesisUtterance(next.text);
-  utt.lang = SPEECH_LANG[next.lang] || next.lang;
-  utt.onend = () => { S.voice.speaking = false; drainSpeak(); };
-  utt.onerror = () => { S.voice.speaking = false; drainSpeak(); };
-  try { window.speechSynthesis.speak(utt); } catch{ S.voice.speaking = false; drainSpeak(); }
+  let done = false;
+  const finish = () => { if (done) return; done = true; S.voice.speaking = false; drainSpeak(); };
+  try {
+    window.speechSynthesis.resume(); // Chrome can silently pause the queue; nudge it
+    const utt = new SpeechSynthesisUtterance(next.text);
+    const v = pickVoice(next.lang); if (v) utt.voice = v;
+    utt.lang = SPEECH_LANG[next.lang] || next.lang;
+    utt.onend = finish; utt.onerror = finish;
+    window.speechSynthesis.speak(utt);
+    // safety net: some browsers never fire onend, which would freeze the queue
+    setTimeout(finish, Math.min(15000, 1800 + next.text.length * 90));
+  } catch { finish(); }
 }
 
 function elapsedVoice(){ const s = S.voice.session; return (s && s.startedAt) ? Date.now() - s.startedAt : 0; }
