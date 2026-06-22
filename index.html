@@ -714,7 +714,7 @@ const S = {
   screen:'setup', db:null, auth:null, authReady:false, roomId:null, user:null,
   messages:[], cache:{}, pending:new Set(),
   unsub:null, connected:true, connWatch:false,
-  participants:[], presenceRef:null, presenceUnsub:null, heartbeat:null,
+  participants:[], presenceRef:null, presenceUnsub:null, heartbeat:null, roomRef:null, cleanupArmed:null,
   recognizing:false, lastSend:0,
   voice:{ live:[], utterances:[], seen:new Set(), session:null, mic:false,
           recog:null, timer:null, hb:null, unsubs:[], meRef:null, liveWrite:null,
@@ -782,11 +782,18 @@ function updateURLHash(){
 function decodeConfigFromURL(b64){
   try { return JSON.parse(decodeURIComponent(escape(atob(b64)))); } catch { return null; }
 }
+// Strong random room id — rooms are private; only people with the link/id can enter.
+function freshRoomId(){
+  let rnd = '';
+  try { if (crypto.randomUUID) rnd = crypto.randomUUID().replace(/-/g,''); } catch {}
+  if (!rnd) rnd = (Math.random().toString(36) + Math.random().toString(36)).replace(/[^a-z0-9]/g,'');
+  return 'r-' + rnd.slice(0,14);
+}
 function getOrMakeRoom(){
   const { room } = parseHash();
   if (room) return room;
-  // No room in URL → everyone lands in the shared default room.
-  return 'main';
+  // No room in the URL → start a fresh private room (no shared default).
+  return freshRoomId();
 }
 
 // ── USER COLOR ────────────────────────────────
@@ -919,6 +926,7 @@ async function sendMsg(text){
 function startPresence(){
   if (!S.db || !S.user || !S.roomId) return;
   stopPresence();
+  S.roomRef = ref(S.db, `rooms/${S.roomId}`);
   const meRef = ref(S.db, `rooms/${S.roomId}/presence/${S.user.id}`);
   S.presenceRef = meRef;
   const write = () => set(meRef, presencePayload())
@@ -935,8 +943,21 @@ function startPresence(){
       if (v && (!v.ts || now - v.ts < 70000)) list.push({ id: c.key, ...v });
     });
     S.participants = list;
+    manageRoomCleanup(list.length);
     renderParticipants();
   }, err => console.error('[sklad] presence listener error:', err));
+}
+// Ephemeral rooms: when I'm the last one here, arm a server-side wipe of the whole
+// room (messages + presence + voice) for when I disconnect. Cancel it if others are present.
+function manageRoomCleanup(count){
+  if (!S.roomRef) return;
+  const arm = count <= 1;
+  if (arm === S.cleanupArmed) return;
+  S.cleanupArmed = arm;
+  try {
+    if (arm) onDisconnect(S.roomRef).remove();
+    else onDisconnect(S.roomRef).cancel();
+  } catch(e){ console.error('[sklad] room cleanup:', e); }
 }
 function presencePayload(){
   const d = { name: S.user.name, lang: S.user.lang, ts: Date.now() };
@@ -951,6 +972,8 @@ function stopPresence(){
   if (S.heartbeat){ clearInterval(S.heartbeat); S.heartbeat = null; }
   if (S.presenceUnsub){ try { S.presenceUnsub(); } catch{} S.presenceUnsub = null; }
   if (S.presenceRef){ try { remove(S.presenceRef); } catch{} S.presenceRef = null; }
+  if (S.roomRef){ try { onDisconnect(S.roomRef).cancel(); } catch{} S.roomRef = null; }
+  S.cleanupArmed = null;
 }
 
 // ── CONNECTION STATUS ─────────────────────────
@@ -1750,7 +1773,9 @@ function renderChatShell(app){
 
   // new room — generates a fresh room ID and switches to it
   document.getElementById('newRoomBtn').addEventListener('click', () => {
-    const fresh = 'room-' + Math.random().toString(36).slice(2,8);
+    const fresh = freshRoomId();
+    // leaving the current room: if I'm the last one, wipe it (and its messages) now
+    if (S.roomRef && (S.participants||[]).filter(p=>p.id!==S.user.id).length === 0){ try { remove(S.roomRef); } catch{} }
     // detach current listeners and reset room state
     if (S.unsub) { try { S.unsub(); } catch{} S.unsub = null; }
     stopPresence();
